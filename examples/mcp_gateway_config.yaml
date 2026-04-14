@@ -1,0 +1,26 @@
+# Example snippet for a streamable-HTTP MCP client (e.g. mcp-gateway
+# style configs). trawl-mcp is a stdio server by default; to expose
+# it over HTTP run it behind the MCP HTTP adapter of your choice, or
+# bake it into a Docker service (see Dockerfile in the repo root).
+#
+# Profile cache persistence: mount a named volume at /root/.cache/trawl
+# so profiles survive container restarts. Example docker-compose
+# override:
+#
+#   services:
+#     trawl:
+#       volumes:
+#         - trawl-profile-cache:/root/.cache/trawl
+#   volumes:
+#     trawl-profile-cache:
+
+mcp_servers:
+  trawl:
+    description: |
+      Fetch a web page or PDF and return only the chunks relevant to
+      the user's query. Uses dense embedding retrieval (bge-m3). Best
+      for "read this article", "summarise this URL", or "what does
+      this page say about X" when the page is too large to dump into
+      context.
+    url: http://trawl:8765/mcp
+    enabled: true

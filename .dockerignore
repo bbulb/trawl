@@ -1,0 +1,13 @@
+.git
+.gitignore
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.claude
+tests/results
+docs/
+examples/
+*.md
+!README.md
+.pytest_cache

@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.venv/
+.env
+
+# local Claude Code state
+.claude/
+
+# test outputs
+tests/results/2*/
+tests/results/*.json
+!tests/results/.gitkeep
+
+# benchmark outputs
+benchmarks/results/

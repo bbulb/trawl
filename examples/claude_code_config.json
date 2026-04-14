@@ -1,0 +1,22 @@
+{
+  "_comment": "Example MCP server config for Claude Code. Add this entry to your existing mcp_servers.json (or equivalent). The trawl-mcp server speaks stdio, so Claude Code will spawn it when the fetch_page tool is invoked. Requires trawl to be pip-installed (with its console script) in the Python environment on PATH.",
+
+  "mcpServers": {
+    "trawl": {
+      "command": "trawl-mcp",
+      "args": [],
+      "env": {
+        "TRAWL_EMBED_URL": "http://localhost:8081/v1",
+        "TRAWL_EMBED_MODEL": "bge-m3-Q8_0.gguf",
+        "TRAWL_HYDE_URL": "http://localhost:8082/v1",
+        "TRAWL_HYDE_MODEL": "gemma-4-E4B-it-Q8_0.gguf"
+      }
+    }
+  },
+
+  "_notes": [
+    "If you haven't installed the `trawl-mcp` console script on PATH, use one of: (a) `{\"command\": \"mamba\", \"args\": [\"run\", \"-n\", \"trawl\", \"python\", \"-m\", \"trawl_mcp\"]}` if you installed trawl into a mamba env named `trawl`, or (b) `{\"command\": \"/absolute/path/to/python\", \"args\": [\"-m\", \"trawl_mcp\"]}` pointing at a venv's interpreter.",
+    "The `env` block lets you point at a different embedding server without touching trawl's source. All env vars follow the TRAWL_{COMPONENT}_{PROPERTY} convention — see README.md and .env.example for the full list.",
+    "Cloudflare-protected sites (Stack Overflow, etc.) take ~10-20s per fetch because playwright-stealth has to solve the JS challenge. Set a generous tool timeout on the client side."
+  ]
+}

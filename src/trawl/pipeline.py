@@ -1,0 +1,650 @@
+"""Top-level entry point: fetch_relevant(url, query) → top-k chunks.
+
+Workflow:
+    1. track_visit(url) — increment the per-URL visit counter for the
+       lazy suggest_profile hint.
+    2. If a cached profile exists for this URL, take the profile fast
+       path: render, apply the cached selector, verify via anchors,
+       extract, chunk, and either return all chunks directly (small
+       subtree) or retrieve top-k (large subtree with a query).
+    3. Otherwise fall back to the existing pipeline: PDF via
+       httpx+pymupdf, otherwise Playwright+Trafilatura → chunking →
+       (optional HyDE) → bge-m3 cosine top-k.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import time
+from dataclasses import asdict, dataclass
+from urllib.parse import urlsplit
+
+from . import chunking, extraction, hyde, reranking, retrieval
+from .fetchers import github, pdf, playwright, stackexchange, wikipedia, youtube
+
+logger = logging.getLogger(__name__)
+
+
+PROFILE_DIRECT_CHUNK_THRESHOLD = int(
+    os.environ.get(
+        "TRAWL_PROFILE_DIRECT_CHUNK_THRESHOLD",
+        "20",
+    )
+)
+VISIT_HINT_THRESHOLD = int(
+    os.environ.get(
+        "TRAWL_PROFILE_VISIT_HINT_THRESHOLD",
+        "3",
+    )
+)
+PROFILE_TRANSFER_MIN_RATIO = float(
+    os.environ.get(
+        "TRAWL_PROFILE_TRANSFER_MIN_RATIO",
+        "0.3",
+    )
+)
+PROFILE_TRANSFER_MAX_RATIO = float(
+    os.environ.get(
+        "TRAWL_PROFILE_TRANSFER_MAX_RATIO",
+        "3.0",
+    )
+)
+
+
+@dataclass
+class PipelineResult:
+    url: str
+    query: str
+    fetcher_used: str
+    fetch_ms: int
+    chunk_ms: int
+    retrieval_ms: int
+    total_ms: int
+    page_chars: int
+    n_chunks_total: int
+    structured_path: bool
+    hyde_used: bool
+    hyde_text: str
+    chunks: list[dict]
+    error: str | None = None
+    # New fields for the profile feature. All have safe defaults so
+    # existing callers that construct PipelineResult by hand keep working.
+    profile_used: bool = False
+    profile_hash: str | None = None
+    path: str = "full_page_retrieval"
+    suggest_profile: bool = False
+    suggest_profile_reason: str | None = None
+    rerank_used: bool = False
+    rerank_ms: int = 0
+
+    @property
+    def output_chars(self) -> int:
+        return sum(c.get("char_count", 0) for c in self.chunks)
+
+    @property
+    def compression_ratio(self) -> float:
+        return self.page_chars / max(self.output_chars, 1)
+
+
+def _adaptive_k(n_chunks: int, override: int | None = None) -> int:
+    """Pick top-k based on chunk pool size.
+
+    Smaller pools need larger k because rank noise is proportional to
+    pool size; larger pools can afford tighter k because the top of
+    the distribution is more stable. Thresholds are empirically tuned
+    from the parity matrix — see CLAUDE.md "Things NOT to change".
+    """
+    if override is not None:
+        return override
+    if n_chunks < 30:
+        return min(8, max(5, n_chunks // 2 + 2))
+    if n_chunks < 100:
+        return 8
+    if n_chunks < 200:
+        return 10
+    return 12
+
+
+def _is_pdf_url(url: str) -> bool:
+    lower = url.lower()
+    return lower.endswith(".pdf") or "/pdf/" in lower
+
+
+# (fetcher_module, native_fetcher_name) — each module exposes `matches(url) -> bool`
+# and `fetch(url) -> FetchResult`. Checked in order; first match wins.
+_API_FETCHERS = [
+    (youtube, "youtube"),
+    (github, "github"),
+    (stackexchange, "stackexchange"),
+    (wikipedia, "wikipedia"),
+]
+
+
+def _chunk_to_dict(chunk, *, score: float | None) -> dict:
+    return {
+        "text": chunk.text,
+        "heading": chunk.heading,
+        "char_count": chunk.char_count,
+        "chunk_index": chunk.chunk_index,
+        "score": score,
+    }
+
+
+def _error_result(
+    url: str,
+    query: str,
+    error: str,
+    t_start: float,
+    **overrides,
+) -> PipelineResult:
+    """Build a PipelineResult for an error path.
+
+    All counters default to zero; callers override the ones that carry
+    meaningful partial state (fetch_ms, chunk_ms, hyde_used, etc.).
+    """
+    fields = {
+        "url": url,
+        "query": query,
+        "fetcher_used": "",
+        "fetch_ms": 0,
+        "chunk_ms": 0,
+        "retrieval_ms": 0,
+        "total_ms": int((time.monotonic() - t_start) * 1000),
+        "page_chars": 0,
+        "n_chunks_total": 0,
+        "structured_path": False,
+        "hyde_used": False,
+        "hyde_text": "",
+        "chunks": [],
+        "error": error,
+        "path": "error",
+    }
+    fields.update(overrides)
+    return PipelineResult(**fields)
+
+
+def _contains_all_tokens(text: str, anchor: str) -> bool:
+    """Mirror the mapper's token-level match rule in Python so the
+    profile fast path can pick the right element among multiple matches
+    of the same selector.
+    """
+    normalized = " ".join((text or "").split())
+    tokens = (anchor or "").split()
+    return bool(tokens) and all(t in normalized for t in tokens)
+
+
+def _build_profile_result(
+    url: str,
+    query: str | None,
+    *,
+    profile,
+    subtree_html: str,
+    k: int | None,
+    t_start: float,
+    fetch_ms: int,
+    use_rerank: bool = True,
+) -> PipelineResult:
+    """Given a subtree HTML snippet already extracted via a profile's
+    selector, build the PipelineResult that the caller returns.
+
+    Shared by the exact-match fast path and the host-transfer path.
+    """
+    t_chunk = time.monotonic()
+    md = extraction.html_to_markdown(subtree_html)
+    chunks = chunking.chunk_markdown(md)
+    chunk_ms = int((time.monotonic() - t_chunk) * 1000)
+
+    # Fields shared by every return from this function.
+    base_kwargs = {
+        "url": url,
+        "query": query or "",
+        "fetcher_used": "profile+trafilatura",
+        "fetch_ms": fetch_ms,
+        "chunk_ms": chunk_ms,
+        "page_chars": len(md),
+        "n_chunks_total": len(chunks),
+        "structured_path": False,
+        "hyde_used": False,
+        "hyde_text": "",
+        "profile_used": True,
+        "profile_hash": profile.url_hash,
+    }
+
+    rerank_ms = 0
+    if len(chunks) <= PROFILE_DIRECT_CHUNK_THRESHOLD:
+        path = "profile_direct"
+        retrieved_dicts = [_chunk_to_dict(c, score=None) for c in chunks]
+        retrieval_ms = 0
+    elif query:
+        path = "profile_retrieval"
+        t_ret = time.monotonic()
+        chosen_k = _adaptive_k(len(chunks), override=k)
+        retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
+        retrieved = retrieval.retrieve(query, chunks, k=retrieve_k)
+        retrieval_ms = int((time.monotonic() - t_ret) * 1000)
+        if retrieved.error:
+            return PipelineResult(
+                **base_kwargs,
+                retrieval_ms=retrieval_ms,
+                total_ms=int((time.monotonic() - t_start) * 1000),
+                chunks=[],
+                error=retrieved.error,
+                path=path,
+            )
+        if use_rerank and retrieved.scored:
+            t_rr = time.monotonic()
+            final_scored = reranking.rerank(query, retrieved.scored, k=chosen_k)
+            rerank_ms = int((time.monotonic() - t_rr) * 1000)
+        else:
+            final_scored = retrieved.scored
+        retrieved_dicts = [_chunk_to_dict(s.chunk, score=s.score) for s in final_scored]
+    else:
+        path = "profile_direct_large"
+        retrieved_dicts = [_chunk_to_dict(c, score=None) for c in chunks]
+        retrieval_ms = 0
+
+    return PipelineResult(
+        **base_kwargs,
+        retrieval_ms=retrieval_ms,
+        total_ms=int((time.monotonic() - t_start) * 1000),
+        chunks=retrieved_dicts,
+        path=path,
+        rerank_used=use_rerank and path == "profile_retrieval",
+        rerank_ms=rerank_ms,
+    )
+
+
+def _profile_fast_path(
+    url: str,
+    query: str | None,
+    *,
+    profile,
+    k: int | None,
+    t_start: float,
+    use_rerank: bool = True,
+) -> PipelineResult | None:
+    """Attempt the profile fast path. Returns a PipelineResult on
+    success, or None if the profile has drifted (selector no longer
+    matches) so the caller should fall back to the full pipeline.
+    """
+    t_fetch = time.monotonic()
+    with playwright.render_session(url) as r:
+        # A profile with zero verification anchors is untrustworthy: we
+        # would vacuously accept the first selector match (all([]) is
+        # True) and silently return wrong content on a drifted page.
+        # Treat it as drift so the caller falls back to the full
+        # pipeline.
+        if not profile.mapper.verification_anchors:
+            logger.info(
+                "profile for %s has no verification anchors; treating as drift",
+                url,
+            )
+            return None
+        els = r.page.query_selector_all(profile.mapper.main_selector)
+        chosen = None
+        for el in els:
+            text = el.inner_text()
+            if all(_contains_all_tokens(text, a) for a in profile.mapper.verification_anchors):
+                chosen = el
+                break
+        if chosen is None:
+            logger.info(
+                "profile drift for %s: selector=%r returned %d candidates, "
+                "none passed verification anchors %r",
+                url,
+                profile.mapper.main_selector,
+                len(els),
+                profile.mapper.verification_anchors,
+            )
+            return None
+        subtree_html = chosen.evaluate("el => el.outerHTML")
+    fetch_ms = int((time.monotonic() - t_fetch) * 1000)
+
+    return _build_profile_result(
+        url,
+        query,
+        profile=profile,
+        subtree_html=subtree_html,
+        k=k,
+        t_start=t_start,
+        fetch_ms=fetch_ms,
+        use_rerank=use_rerank,
+    )
+
+
+def _profile_transfer_path(
+    url: str,
+    query: str | None,
+    *,
+    k: int | None,
+    t_start: float,
+    use_rerank: bool = True,
+) -> PipelineResult | None:
+    """Try to match `url` against existing same-host profiles.
+
+    On success: render, apply the matched profile's selector, verify
+    the extracted subtree's char count is within PROFILE_TRANSFER_*_RATIO
+    of the candidate's recorded subtree_char_count, extract + chunk +
+    return via _build_profile_result, and persist a copy of the
+    profile under `url`'s hash.
+
+    Returns None if no candidate matches.
+    """
+    from trawl.profiles import (
+        build_profile_copy,
+        extract_fresh_anchors,
+        list_host_profiles,
+        save_profile,
+    )
+
+    host = urlsplit(url).netloc.lower()
+    if not host:
+        return None
+    candidates = list_host_profiles(host)
+    if not candidates:
+        return None
+
+    t_fetch = time.monotonic()
+    with playwright.render_session(url) as r:
+        for profile in candidates:
+            if not profile.mapper.main_selector:
+                continue
+            scc = profile.mapper.subtree_char_count or 0
+            if scc <= 0:
+                continue
+            try:
+                els = r.page.query_selector_all(profile.mapper.main_selector)
+            except Exception as e:
+                logger.exception(
+                    "transfer: selector %r failed on %s: %s",
+                    profile.mapper.main_selector,
+                    url,
+                    e,
+                )
+                continue
+            lo = scc * PROFILE_TRANSFER_MIN_RATIO
+            hi = scc * PROFILE_TRANSFER_MAX_RATIO
+            for el in els:
+                try:
+                    text = el.inner_text()
+                except Exception as e:
+                    logger.exception("transfer: inner_text raised: %s", e)
+                    continue
+                n = len(text)
+                if not (lo <= n <= hi):
+                    continue
+                try:
+                    subtree_html = el.evaluate("el => el.outerHTML")
+                except Exception as e:
+                    logger.exception("transfer: outerHTML extract raised: %s", e)
+                    continue
+                fresh = extract_fresh_anchors(text)
+                copy = build_profile_copy(profile, url, fresh)
+                if fresh:
+                    # Only persist when the copy has content anchors the
+                    # exact-match fast path can use for drift detection.
+                    # An empty-anchor copy would be treated as drift on
+                    # the next visit and fall back into this transfer
+                    # path, causing an infinite re-render/re-save loop.
+                    try:
+                        save_profile(copy)
+                    except Exception as e:
+                        # Persistence failed but the in-memory copy is
+                        # correct — log with traceback and still return
+                        # the result. `copy.url_hash` is already
+                        # url_hash(url), so profile_hash is correct.
+                        logger.exception(
+                            "transfer: save of copy for %s failed: %s",
+                            url,
+                            e,
+                        )
+                else:
+                    logger.info(
+                        "transfer: matched %s but fresh anchors empty; "
+                        "not persisting copy (next visit will re-transfer)",
+                        url,
+                    )
+                fetch_ms = int((time.monotonic() - t_fetch) * 1000)
+                logger.info(
+                    "transfer: matched %s under profile %s (selector=%r, %d chars)",
+                    url,
+                    profile.url_hash,
+                    profile.mapper.main_selector,
+                    n,
+                )
+                return _build_profile_result(
+                    url,
+                    query,
+                    profile=copy,
+                    subtree_html=subtree_html,
+                    k=k,
+                    t_start=t_start,
+                    fetch_ms=fetch_ms,
+                    use_rerank=use_rerank,
+                )
+    logger.info(
+        "transfer: no host-local profile matched %s (scanned %d)",
+        url,
+        len(candidates),
+    )
+    return None
+
+
+def fetch_relevant(
+    url: str,
+    query: str | None = None,
+    *,
+    k: int | None = None,
+    use_hyde: bool = False,
+    use_rerank: bool = True,
+) -> PipelineResult:
+    """Fetch `url`, return the main content.
+
+    - If a cached profile exists for `url`, the profile fast path is
+      taken and embedding is skipped for small subtrees. `query` is
+      optional in this case — it's only used if the profiled subtree
+      exceeds PROFILE_DIRECT_CHUNK_THRESHOLD and retrieval is needed.
+    - If no profile exists (or the profile has drifted), falls back to
+      the existing pipeline. `query` is required for this path; calling
+      without a query returns an error PipelineResult with
+      suggest_profile=True.
+
+    Never raises — errors land in `result.error`.
+    """
+    t_start = time.monotonic()
+
+    # Lazy import so a broken profiles subpackage cannot break trawl
+    # startup. track_visit is cheap (one file read/write).
+    try:
+        from trawl.profiles import (
+            get_visit_count,
+            load_profile,
+            track_visit,
+        )
+
+        track_visit(url)
+        profile = load_profile(url)
+    except Exception as e:
+        logger.warning("profiles subsystem unavailable, falling back: %s", e)
+        profile = None
+        track_visit = None
+        get_visit_count = None
+
+    if profile is not None and profile.mapper.main_selector:
+        try:
+            result = _profile_fast_path(
+                url,
+                query,
+                profile=profile,
+                k=k,
+                t_start=t_start,
+                use_rerank=use_rerank,
+            )
+        except Exception as e:
+            logger.warning("profile fast path raised, falling through: %s", e)
+            result = None
+        if result is not None:
+            return result
+        # Drift → fall through to transfer path.
+
+    # Host-transfer path (exact miss or exact drift).
+    try:
+        transfer_result = _profile_transfer_path(
+            url,
+            query,
+            k=k,
+            t_start=t_start,
+            use_rerank=use_rerank,
+        )
+    except Exception as e:
+        logger.warning("profile transfer path raised, falling through: %s", e)
+        transfer_result = None
+    if transfer_result is not None:
+        return transfer_result
+
+    # Full pipeline (existing behavior + query=None guard + suggest_profile).
+    if not query:
+        visit_count = get_visit_count(url) if get_visit_count else 0
+        return _error_result(
+            url,
+            "",
+            "no profile for URL; provide a query or call profile_page first",
+            t_start,
+            suggest_profile=visit_count >= VISIT_HINT_THRESHOLD,
+            suggest_profile_reason=(
+                f"visited {visit_count} times; profile_page({url!r}) would speed up future calls"
+                if visit_count >= VISIT_HINT_THRESHOLD
+                else None
+            ),
+        )
+
+    result = _run_full_pipeline(
+        url,
+        query,
+        k=k,
+        use_hyde=use_hyde,
+        use_rerank=use_rerank,
+        t_start=t_start,
+    )
+
+    # Populate lazy suggest_profile hint on the fallback path.
+    if get_visit_count is not None:
+        visit_count = get_visit_count(url)
+        if visit_count >= VISIT_HINT_THRESHOLD:
+            result.suggest_profile = True
+            result.suggest_profile_reason = (
+                f"visited {visit_count} times; profile_page({url!r}) would speed up future calls"
+            )
+    return result
+
+
+def _run_full_pipeline(
+    url: str,
+    query: str,
+    *,
+    k: int | None,
+    use_hyde: bool,
+    use_rerank: bool,
+    t_start: float,
+) -> PipelineResult:
+    """Non-profile pipeline: fetch → extract → chunk → (HyDE) → retrieve → rerank."""
+    # 1. Fetch → markdown
+    if _is_pdf_url(url):
+        fetched = pdf.fetch(url)
+        markdown = fetched.markdown
+        fetcher_name = "pdf"
+    else:
+        for fetcher_mod, native_name in _API_FETCHERS:
+            if fetcher_mod.matches(url):
+                fetched = fetcher_mod.fetch(url)
+                if fetched.fetcher == native_name:
+                    markdown = fetched.markdown
+                    fetcher_name = native_name
+                else:
+                    # API fetcher fell back to playwright — re-extract.
+                    markdown = extraction.html_to_markdown(fetched.html) if fetched.ok else ""
+                    fetcher_name = "playwright+trafilatura"
+                break
+        else:
+            fetched = playwright.fetch(url)
+            markdown = extraction.html_to_markdown(fetched.html) if fetched.ok else ""
+            fetcher_name = "playwright+trafilatura"
+
+    if not fetched.ok or not markdown:
+        return _error_result(
+            url,
+            query,
+            fetched.error or "empty markdown after extraction",
+            t_start,
+            fetcher_used=fetcher_name,
+            fetch_ms=fetched.elapsed_ms,
+            page_chars=len(markdown),
+        )
+
+    # 2. Chunk
+    t_chunk = time.monotonic()
+    chunks = chunking.chunk_markdown(markdown)
+    chunk_ms = int((time.monotonic() - t_chunk) * 1000)
+
+    # 3. Optional HyDE
+    extras: list[str] = []
+    hyde_text = ""
+    if use_hyde:
+        hyde_text = hyde.expand(query)
+        if hyde_text:
+            extras = [hyde_text]
+
+    # 4. Retrieve + rerank
+    chosen_k = _adaptive_k(len(chunks), override=k)
+    retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
+    retrieved = retrieval.retrieve(query, chunks, k=retrieve_k, extra_query_texts=extras)
+    if retrieved.error:
+        return _error_result(
+            url,
+            query,
+            retrieved.error,
+            t_start,
+            fetcher_used=fetcher_name,
+            fetch_ms=fetched.elapsed_ms,
+            chunk_ms=chunk_ms,
+            retrieval_ms=retrieved.elapsed_ms,
+            page_chars=len(markdown),
+            n_chunks_total=len(chunks),
+            hyde_used=use_hyde,
+            hyde_text=hyde_text,
+        )
+
+    rerank_ms = 0
+    if use_rerank and retrieved.scored:
+        t_rerank = time.monotonic()
+        final_scored = reranking.rerank(query, retrieved.scored, k=chosen_k)
+        rerank_ms = int((time.monotonic() - t_rerank) * 1000)
+    else:
+        final_scored = retrieved.scored
+
+    return PipelineResult(
+        url=url,
+        query=query,
+        fetcher_used=fetcher_name,
+        fetch_ms=fetched.elapsed_ms,
+        chunk_ms=chunk_ms,
+        retrieval_ms=retrieved.elapsed_ms,
+        total_ms=int((time.monotonic() - t_start) * 1000),
+        page_chars=len(markdown),
+        n_chunks_total=len(chunks),
+        structured_path=False,
+        hyde_used=use_hyde,
+        hyde_text=hyde_text,
+        chunks=[_chunk_to_dict(s.chunk, score=s.score) for s in final_scored],
+        path="full_page_retrieval",
+        rerank_used=use_rerank,
+        rerank_ms=rerank_ms,
+    )
+
+
+def to_dict(result: PipelineResult) -> dict:
+    d = asdict(result)
+    d["output_chars"] = result.output_chars
+    d["compression_ratio"] = round(result.compression_ratio, 1)
+    return d

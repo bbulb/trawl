@@ -1,0 +1,248 @@
+# Profile evaluation cases for VLM prompt tuning.
+#
+# Broader URL set than the benchmark — covers more site types and
+# layouts to surface VLM prompt weaknesses. Each case has a reference
+# query for GT scoring, but the profile is always generated query-agnostic.
+#
+# Expected selector quality:
+#   - ideal: selector targets the article/content body precisely
+#   - acceptable: selector targets a container slightly larger than needed
+#     but still excludes nav/footer/sidebar
+#   - too_wide: selector captures body-level or near-body container
+#   - fail: profile generation fails entirely
+#
+# Categories (for analysis grouping):
+#   docs, wiki, news_article, news_listing, product, finance,
+#   qa, blog, gov, ecommerce, social, recipe, reference, dashboard
+
+cases:
+  # ===== DOCS =====
+  - id: python_asyncio
+    category: docs
+    url: "https://docs.python.org/3/library/asyncio-task.html"
+    query: "how to create and await an async task"
+    description: "Python stdlib docs — sidebar + main content, code blocks"
+
+  - id: mdn_fetch
+    category: docs
+    url: "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch"
+    query: "how to make a POST request with Fetch"
+    description: "MDN — left sidebar, breadcrumb, article body with code"
+
+  - id: react_usestate
+    category: docs
+    url: "https://react.dev/reference/react/useState"
+    query: "how to use useState hook"
+    description: "React docs — sidebar, tabbed code samples"
+
+  - id: tailwind_flex
+    category: docs
+    url: "https://tailwindcss.com/docs/flex"
+    query: "how to use flexbox utilities in Tailwind"
+    description: "Tailwind docs — left sidebar, utility class reference table"
+
+  - id: nextjs_routing
+    category: docs
+    url: "https://nextjs.org/docs/app/building-your-application/routing"
+    query: "how does file-based routing work in Next.js"
+    description: "Next.js docs — sidebar navigation, inline diagrams"
+
+  - id: rust_book_ownership
+    category: docs
+    url: "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html"
+    query: "what is ownership in Rust"
+    description: "Rust Book — minimal sidebar, prose-heavy with code blocks"
+
+  # ===== WIKI =====
+  - id: wiki_llm
+    category: wiki
+    url: "https://en.wikipedia.org/wiki/Large_language_model"
+    query: "how are large language models trained"
+    description: "Wikipedia EN — long article with TOC, infobox, references"
+
+  - id: wiki_climate
+    category: wiki
+    url: "https://en.wikipedia.org/wiki/Climate_change"
+    query: "what causes climate change"
+    description: "Wikipedia EN — very long article with images and charts"
+
+  - id: wiki_kr_hangul
+    category: wiki
+    url: "https://ko.wikipedia.org/wiki/%ED%95%9C%EA%B8%80"
+    query: "한글의 창제 원리와 역사"
+    description: "Wikipedia KO — Korean article, infobox, citations"
+
+  - id: wiki_jp_tokyo
+    category: wiki
+    url: "https://ja.wikipedia.org/wiki/%E6%9D%B1%E4%BA%AC%E9%83%BD"
+    query: "東京都の人口と行政区"
+    description: "Wikipedia JP — Japanese article with tables and infobox"
+
+  # ===== NEWS ARTICLE =====
+  - id: bbc_article
+    category: news_article
+    url: "https://www.bbc.com/news/articles/c5y6z0lz2d0o"
+    query: "what is this article about"
+    description: "BBC article — standard article layout with media"
+
+  - id: nyt_article
+    category: news_article
+    url: "https://www.nytimes.com/2025/01/06/technology/ai-agents-2025.html"
+    query: "what are AI agents and their outlook"
+    description: "NYT — paywall possible, article body + sidebar"
+
+  - id: guardian_article
+    category: news_article
+    url: "https://www.theguardian.com/technology/article/2025/jun/12/ai-regulation-eu"
+    query: "what is this article about"
+    description: "Guardian — standard article layout"
+
+  # ===== NEWS LISTING =====
+  - id: bbc_frontpage
+    category: news_listing
+    url: "https://www.bbc.com/news"
+    query: "what are the top stories today"
+    description: "BBC News front page — card grid of headlines"
+
+  - id: hackernews
+    category: news_listing
+    url: "https://news.ycombinator.com/"
+    query: "what are the top stories on Hacker News"
+    description: "Hacker News — simple table-like listing, minimal CSS"
+
+  - id: reddit_sub
+    category: news_listing
+    url: "https://www.reddit.com/r/programming/"
+    query: "what are the hot posts in r/programming"
+    description: "Reddit subreddit — card list with votes, complex UI"
+
+  # ===== PRODUCT / PRICING =====
+  - id: github_pricing
+    category: product
+    url: "https://github.com/pricing"
+    query: "how much does GitHub Team cost"
+    description: "GitHub pricing — comparison cards"
+
+  - id: notion_pricing
+    category: product
+    url: "https://www.notion.com/pricing"
+    query: "what are Notion's plan prices"
+    description: "Notion pricing — plan comparison with feature grids"
+
+  - id: vercel_pricing
+    category: product
+    url: "https://vercel.com/pricing"
+    query: "how much does Vercel Pro cost"
+    description: "Vercel pricing — plan cards with feature lists"
+
+  # ===== FINANCE =====
+  - id: gf_apple
+    category: finance
+    url: "https://www.google.com/finance/quote/AAPL:NASDAQ"
+    query: "Apple stock price and performance"
+    description: "Google Finance — stock chart, key stats, news"
+
+  - id: gf_samsung
+    category: finance
+    url: "https://www.google.com/finance/quote/005930:KRX"
+    query: "삼성전자 주가"
+    description: "Google Finance KRX — Korean market, same layout"
+
+  - id: yahoo_finance
+    category: finance
+    url: "https://finance.yahoo.com/quote/MSFT/"
+    query: "Microsoft stock price and key stats"
+    description: "Yahoo Finance — dense data layout, multiple widgets"
+
+  # ===== Q&A =====
+  - id: so_venv
+    category: qa
+    url: "https://stackoverflow.com/questions/41573587/what-is-the-difference-between-venv-pyvenv-pyenv-virtualenv-virtualenvwrapper"
+    query: "difference between venv and virtualenv"
+    description: "Stack Overflow — question + answers + sidebar"
+
+  - id: so_async_await
+    category: qa
+    url: "https://stackoverflow.com/questions/9596276/how-to-explain-callbacks-in-plain-english"
+    query: "how to explain callbacks in plain English"
+    description: "Stack Overflow — shorter Q&A, code examples"
+
+  # ===== BLOG =====
+  - id: openai_blog
+    category: blog
+    url: "https://openai.com/index/hello-gpt-4o/"
+    query: "what is GPT-4o"
+    description: "OpenAI blog — rich media, video embeds"
+
+  - id: paulgraham
+    category: blog
+    url: "https://www.paulgraham.com/do.html"
+    query: "what should you work on"
+    description: "Paul Graham essay — minimal HTML, no heading structure"
+
+  - id: substack_post
+    category: blog
+    url: "https://blog.pragmaticengineer.com/the-pulse-97/"
+    query: "what are the main topics in this newsletter"
+    description: "Substack post — newsletter-style article"
+
+  # ===== GITHUB =====
+  - id: gh_fastapi
+    category: code
+    url: "https://github.com/fastapi/fastapi"
+    query: "how to install FastAPI"
+    description: "GitHub repo page — README render + file tree + sidebar"
+
+  - id: gh_issue
+    category: code
+    url: "https://github.com/vercel/next.js/issues/43810"
+    query: "what is this issue about"
+    description: "GitHub issue — thread of comments"
+
+  - id: gh_pr
+    category: code
+    url: "https://github.com/facebook/react/pull/28271"
+    query: "what does this PR change"
+    description: "GitHub pull request — diff summary, review comments"
+
+  # ===== ECOMMERCE =====
+  - id: amazon_product
+    category: ecommerce
+    url: "https://www.amazon.com/dp/B0D1XD1ZV3"
+    query: "what are the specs and price of this product"
+    description: "Amazon product page — images, specs, reviews, buy box"
+
+  # ===== RECIPE =====
+  - id: recipe_page
+    category: recipe
+    url: "https://www.allrecipes.com/recipe/22180/waffles-i/"
+    query: "what are the ingredients and steps for waffles"
+    description: "AllRecipes — structured recipe with ingredients/steps/reviews"
+
+  # ===== REFERENCE =====
+  - id: imdb_movie
+    category: reference
+    url: "https://www.imdb.com/title/tt1375666/"
+    query: "what is Inception about and what is its rating"
+    description: "IMDB — movie page with structured data, cast, reviews"
+
+  # ===== GOV / INSTITUTIONAL =====
+  - id: cdc_page
+    category: gov
+    url: "https://www.cdc.gov/covid/index.html"
+    query: "latest COVID-19 guidance"
+    description: "CDC — institutional page with cards and navigation"
+
+  # ===== SOCIAL =====
+  - id: twitter_profile
+    category: social
+    url: "https://x.com/OpenAI"
+    query: "what are the latest posts from OpenAI"
+    description: "X/Twitter profile — tweet timeline, login wall possible"
+
+  # ===== DASHBOARD / APP =====
+  - id: weather_page
+    category: dashboard
+    url: "https://weather.com/weather/today/l/37.57,126.98"
+    query: "what is the current weather in Seoul"
+    description: "Weather.com — widget-heavy dashboard layout"

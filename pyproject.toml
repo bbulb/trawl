@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trawl"
+version = "0.1.0"
+description = "Selective web content extraction — fetch a page and return only the chunks most relevant to a query. Exposed as a Python library and an MCP server."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "lyla" },
+]
+keywords = ["web scraping", "extraction", "rag", "mcp", "embedding"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Text Processing :: Linguistic",
+]
+
+dependencies = [
+    "httpx>=0.27",
+    "playwright>=1.40",
+    "playwright-stealth>=2.0",
+    "trafilatura>=1.6",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "pymupdf>=1.24",
+    "pyyaml>=6.0",
+    "mcp>=1.27",
+    "starlette>=0.37",
+    "uvicorn>=0.30",
+    "youtube-transcript-api>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+trawl-mcp = "trawl_mcp.server:_cli_entry"
+
+[project.urls]
+Homepage = "https://github.com/bbulb/trawl"
+Repository = "https://github.com/bbulb/trawl"
+Issues = "https://github.com/bbulb/trawl/issues"
+Changelog = "https://github.com/bbulb/trawl/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["*.md"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

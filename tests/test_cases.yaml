@@ -1,0 +1,184 @@
+# trawl parity matrix — 12 golden cases.
+#
+# Each case has a URL, a free-form `query` (the kind of phrasing a real
+# user would type), and `ground_truth` (facts that MUST appear in the
+# returned chunks for the case to be scored correct). Auto-scoring rules:
+#
+#   must_contain_all     — every string MUST appear in at least one returned chunk
+#   must_contain_any     — at least one of the strings MUST appear
+#   must_contain_pattern — regex (Python re) MUST match at least one chunk
+#   min_chunks_returned  — at least N chunks must be returned
+#
+# A case passes only if ALL of its rules pass.
+
+cases:
+  - id: kbo_schedule
+    description: "KBO 일정 — vocabulary mismatch (쿼리에 팀명 없음)"
+    url: "https://sports.news.naver.com/kbaseball/schedule/index"
+    query: "오늘 야구 경기 일정 알려줘"
+    expected_phase: 2   # baseline embed should fail; structured detection should rescue
+    ground_truth:
+      must_contain_pattern: '\d{1,2}:\d{2}'   # game start time
+      must_contain_any:
+        - "두산"
+        - "LG"
+        - "SSG"
+        - "KIA"
+        - "삼성"
+        - "롯데"
+        - "한화"
+        - "NC"
+        - "KT"
+        - "키움"
+
+  - id: korean_wiki_person
+    description: "위키피디아 이순신 — 산문 페이지에서 fact 추출"
+    url: "https://ko.wikipedia.org/wiki/%EC%9D%B4%EC%88%9C%EC%8B%A0"
+    query: "이순신 직업 생년월일 주요 업적"
+    expected_phase: 1
+    ground_truth:
+      must_contain_all:
+        - "1545"   # birth year — query asks for 생년월일
+      must_contain_any:
+        - "장군"
+        - "수군"
+        - "무관"   # any of these satisfies "직업"
+      must_contain_any_2:   # at least one major achievement
+        - "한산도"
+        - "노량"
+        - "명량"
+        - "임진왜란"
+        - "옥포"
+
+  - id: korean_news_ranking
+    description: "네이버 뉴스 랭킹 — 헤드라인 리스트"
+    url: "https://news.naver.com/main/ranking/popularDay.naver"
+    query: "오늘 인기 뉴스 헤드라인"
+    expected_phase: 2   # ranking is a list, structured-detection should keep it
+    ground_truth:
+      min_chunks_returned: 3
+      must_contain_pattern: '[가-힣]{3,}'
+
+  - id: pricing_page_ko
+    description: "Notion 한국어 가격 페이지 — 카드/표 형식 가격"
+    url: "https://www.notion.com/ko/pricing"
+    query: "노션 요금제 가격 알려줘"
+    expected_phase: 2   # pricing cards are list-like, but text-heavy
+    ground_truth:
+      must_contain_all:
+        - "₩"
+      must_contain_any:
+        - "무료"
+        - "Free"
+      must_contain_any_2:
+        - "플러스"
+        - "Plus"
+        - "비즈니스"
+        - "Business"
+
+  # ---------- Edge cases added in Track 2 ----------
+
+  - id: english_tech_docs
+    description: "Playwright docs — 영어 기술 문서, 코드 블록 + 섹션 구조"
+    url: "https://playwright.dev/docs/intro"
+    query: "how to install playwright and run the first test"
+    ground_truth:
+      must_contain_any:
+        - "npm init"
+        - "yarn create"
+        - "pip install"
+      must_contain_any_2:
+        - "npx playwright test"
+        - "playwright test"
+        - "first test"
+
+  - id: japanese_wiki
+    description: "일본어 위키피디아 — 멀티링구얼 임베딩 검증"
+    url: "https://ja.wikipedia.org/wiki/%E5%AF%BF%E5%8F%B8"
+    query: "寿司の歴史と種類"
+    ground_truth:
+      must_contain_any:
+        - "江戸"        # Edo period
+        - "握り"        # nigiri
+        - "押し"        # oshi-zushi
+      must_contain_any_2:
+        - "魚"
+        - "米"
+        - "酢"
+
+  - id: blog_post_no_heading
+    description: "구조화 없는 단일 블록 페이지 — 헤딩 없는 에세이 처리"
+    url: "https://www.paulgraham.com/do.html"
+    query: "what should you work on to do great work"
+    ground_truth:
+      must_contain_any:
+        - "work"
+        - "great"
+      min_chunks_returned: 2
+
+  # ---------- Additional edge cases ----------
+
+  - id: github_readme
+    description: "GitHub README — 뱃지/코드블록/표 혼재 영문 개발 문서"
+    url: "https://github.com/anthropics/claude-code"
+    query: "how to install claude code and get started"
+    ground_truth:
+      must_contain_any:
+        - "npm install"
+        - "npm i "
+        - "install"
+      must_contain_any_2:
+        - "claude-code"
+        - "Claude Code"
+
+  - id: arxiv_pdf
+    description: "arXiv PDF — RAG survey 논문 (Firecrawl PDF 파싱 경로)"
+    url: "https://arxiv.org/pdf/2312.10997"
+    query: "what are the main challenges of retrieval augmented generation"
+    ground_truth:
+      must_contain_any:
+        - "retrieval"
+        - "RAG"
+        - "Retrieval"
+      must_contain_any_2:
+        - "challenge"
+        - "limitation"
+        - "problem"
+
+  - id: stackoverflow_question
+    description: "Stack Overflow — 코드+설명 섞인 Q&A 구조"
+    url: "https://stackoverflow.com/questions/419163/what-does-if-name-main-do"
+    query: "what does if __name__ == __main__ do in python"
+    ground_truth:
+      must_contain_any:
+        - "__name__"
+        - "__main__"
+      must_contain_any_2:
+        - "import"
+        - "script"
+        - "module"
+
+  - id: very_short_page
+    description: "아주 짧은 랜딩 페이지 — k > n_chunks 엣지 케이스"
+    url: "https://example.com/"
+    query: "what is this domain for"
+    ground_truth:
+      must_contain_any:
+        - "example"
+        - "domain"
+        - "Example"
+      min_chunks_returned: 1
+
+  # ---------- YouTube ----------
+
+  - id: youtube_transcript
+    description: "YouTube — 자막 있는 영상에서 트랜스크립트 추출"
+    url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    query: "what is this song about"
+    ground_truth:
+      must_contain_any:
+        - "never gonna give you up"
+        - "Never gonna give you up"
+        - "never gonna let you down"
+        - "Never gonna let you down"
+      min_chunks_returned: 2

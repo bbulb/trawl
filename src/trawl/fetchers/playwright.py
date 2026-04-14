@@ -1,0 +1,247 @@
+"""Playwright-based HTML fetcher.
+
+Public API:
+- `fetch(url, ...) -> FetchResult` — original one-shot HTML fetch, closes the
+  browser context before returning. Existing callers (pipeline.fetch_relevant
+  non-profile path) use this.
+- `render_session(url, ...) -> Iterator[RenderResult]` — context manager
+  that keeps the BrowserContext and Page alive for the duration of the
+  `with` block, so callers can run `page.evaluate()`, `get_by_text()`,
+  and other live-page operations (mapper, profile generation).
+
+Both entry points share a `_open_context()` helper so stealth, viewport,
+wait-until fallback, and wait_for_ms stay consistent between them.
+"""
+
+from __future__ import annotations
+
+import atexit
+import threading
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+
+from playwright.sync_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    Playwright,
+    sync_playwright,
+)
+from playwright.sync_api import (
+    TimeoutError as PlaywrightTimeoutError,
+)
+from playwright_stealth import Stealth
+
+
+@dataclass
+class FetchResult:
+    url: str
+    html: str
+    markdown: str
+    raw_html: str
+    fetcher: str
+    elapsed_ms: int
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None and (bool(self.html) or bool(self.markdown))
+
+
+def make_error_result(url: str, fetcher: str, t0: float, error: str) -> FetchResult:
+    """Build an empty FetchResult with the given error and elapsed time."""
+    return FetchResult(
+        url=url,
+        html="",
+        markdown="",
+        raw_html="",
+        fetcher=fetcher,
+        elapsed_ms=int((time.monotonic() - t0) * 1000),
+        error=error,
+    )
+
+
+@dataclass
+class RenderResult:
+    """Yielded by `render_session`. `page` is a live Playwright Page that
+    stays valid only inside the `with` block."""
+
+    url: str
+    page: Page
+    html: str
+    elapsed_ms: int
+
+
+class _BrowserHolder:
+    """Lazy-initialised, process-wide Chromium browser + Playwright runtime.
+
+    Single instance `_browser_holder` owns the global state. `ensure()`
+    brings the browser up on first use and registers teardown at exit;
+    `teardown()` closes it. The module-level `_lock` serialises fetch
+    calls because playwright contexts are not thread-safe.
+    """
+
+    def __init__(self) -> None:
+        self._pw: Playwright | None = None
+        self._browser: Browser | None = None
+
+    def ensure(self) -> Browser:
+        if self._browser is not None:
+            return self._browser
+        self._pw = Stealth().use_sync(sync_playwright()).__enter__()
+        self._browser = self._pw.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ],
+        )
+        atexit.register(self.teardown)
+        return self._browser
+
+    def teardown(self) -> None:
+        if self._browser is not None:
+            try:
+                self._browser.close()
+            except Exception:
+                pass
+            self._browser = None
+        if self._pw is not None:
+            try:
+                self._pw.stop()
+            except Exception:
+                pass
+            self._pw = None
+
+
+_browser_holder = _BrowserHolder()
+_lock = threading.Lock()
+
+
+@contextmanager
+def _open_context(
+    url: str,
+    *,
+    wait_for_ms: int,
+    timeout_s: float,
+    user_agent: str | None,
+) -> Iterator[tuple[BrowserContext, Page, str]]:
+    """Internal helper: open a stealth BrowserContext, navigate to `url`,
+    yield (context, page, html). The context is closed in this generator's
+    finally block when the caller exits the `with` block.
+
+    Uses `networkidle` with half the total timeout, falling back to
+    `domcontentloaded` on PlaywrightTimeoutError so Cloudflare-protected
+    long-polling sites still complete navigation.
+    """
+    browser = _browser_holder.ensure()
+    context = browser.new_context(
+        user_agent=user_agent
+        or "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/123.0.0.0 Safari/537.36",
+        viewport={"width": 1280, "height": 900},
+        locale="ko-KR",
+    )
+    try:
+        page = context.new_page()
+        goto_timeout_ms = int(timeout_s * 1000)
+        try:
+            page.goto(url, wait_until="networkidle", timeout=goto_timeout_ms // 2)
+        except PlaywrightTimeoutError:
+            page.goto(url, wait_until="domcontentloaded", timeout=goto_timeout_ms)
+        if wait_for_ms > 0:
+            page.wait_for_timeout(wait_for_ms)
+        html = page.content()
+        yield context, page, html
+    finally:
+        try:
+            context.close()
+        except Exception:
+            pass
+
+
+def fetch(
+    url: str,
+    *,
+    wait_for_ms: int = 5000,
+    timeout_s: float = 30.0,
+    user_agent: str | None = None,
+) -> FetchResult:
+    """Fetch a URL's rendered HTML using headless Chromium.
+
+    `wait_for_ms` is added after `networkidle` to let lazy SPAs finish
+    their second wave of XHRs. `timeout_s` is the hard page-load ceiling.
+    """
+    t0 = time.monotonic()
+    with _lock:
+        try:
+            with _open_context(
+                url,
+                wait_for_ms=wait_for_ms,
+                timeout_s=timeout_s,
+                user_agent=user_agent,
+            ) as (_ctx, _page, html):
+                return FetchResult(
+                    url=url,
+                    html=html,
+                    markdown="",
+                    raw_html=html,
+                    fetcher="playwright",
+                    elapsed_ms=int((time.monotonic() - t0) * 1000),
+                )
+        except PlaywrightTimeoutError as e:
+            return FetchResult(
+                url=url,
+                html="",
+                markdown="",
+                raw_html="",
+                fetcher="playwright",
+                elapsed_ms=int((time.monotonic() - t0) * 1000),
+                error=f"PlaywrightTimeoutError: {e}",
+            )
+        except Exception as e:
+            return FetchResult(
+                url=url,
+                html="",
+                markdown="",
+                raw_html="",
+                fetcher="playwright",
+                elapsed_ms=int((time.monotonic() - t0) * 1000),
+                error=f"{type(e).__name__}: {e}",
+            )
+
+
+@contextmanager
+def render_session(
+    url: str,
+    *,
+    wait_for_ms: int = 5000,
+    timeout_s: float = 30.0,
+    user_agent: str | None = None,
+) -> Iterator[RenderResult]:
+    """Open `url`, yield a live RenderResult (with Page handle). The Page
+    is only valid inside the `with` block. On exit the BrowserContext is
+    closed; the caller must not retain the page reference afterwards.
+
+    Callers use this when they need to run live Playwright operations
+    (query_selector_all, page.evaluate, screenshot) that `fetch()` cannot
+    support because it closes the context before returning.
+    """
+    t0 = time.monotonic()
+    with _lock:
+        with _open_context(
+            url,
+            wait_for_ms=wait_for_ms,
+            timeout_s=timeout_s,
+            user_agent=user_agent,
+        ) as (_ctx, page, html):
+            yield RenderResult(
+                url=url,
+                page=page,
+                html=html,
+                elapsed_ms=int((time.monotonic() - t0) * 1000),
+            )

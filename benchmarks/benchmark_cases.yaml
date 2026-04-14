@@ -1,0 +1,176 @@
+# Benchmark cases: trawl vs Jina Reader (r.jina.ai)
+#
+# Sites selected for high agent usage frequency. Excludes KBO/Naver
+# sports sites already covered in tests/test_cases.yaml.
+#
+# Each case has:
+#   - url: target page
+#   - query: realistic agent query
+#   - category: site type (docs, wiki, news, code, product, finance, qa, blog)
+#   - ground_truth: facts that MUST appear for the result to be useful
+#
+# Ground truth rules follow the same format as test_cases.yaml.
+
+cases:
+  # --- Technical documentation ---
+  - id: python_asyncio
+    category: docs
+    description: "Python stdlib docs — async/await tutorial"
+    url: "https://docs.python.org/3/library/asyncio-task.html"
+    query: "how to create and await an async task in Python"
+    ground_truth:
+      must_contain_any:
+        - "async def"
+        - "async "
+      must_contain_any_2:
+        - "await"
+        - "create_task"
+        - "gather"
+
+  - id: mdn_fetch_api
+    category: docs
+    description: "MDN Web Docs — Fetch API usage"
+    url: "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch"
+    query: "how to make a POST request with the Fetch API"
+    ground_truth:
+      must_contain_any:
+        - "fetch("
+        - "fetch ("
+        - "Fetch"
+      must_contain_any_2:
+        - "POST"
+        - "method"
+        - "body"
+
+  - id: react_hooks
+    category: docs
+    description: "React docs — useState hook reference"
+    url: "https://react.dev/reference/react/useState"
+    query: "how to use useState hook in React"
+    ground_truth:
+      must_contain_any:
+        - "useState"
+      must_contain_any_2:
+        - "set"
+        - "state"
+        - "initial"
+
+  # --- Wikipedia ---
+  - id: wiki_llm
+    category: wiki
+    description: "Wikipedia — Large language model overview"
+    url: "https://en.wikipedia.org/wiki/Large_language_model"
+    query: "how are large language models trained and what are the key techniques"
+    ground_truth:
+      must_contain_any:
+        - "transformer"
+        - "Transformer"
+        - "training"
+      must_contain_any_2:
+        - "parameter"
+        - "token"
+        - "pre-train"
+        - "fine-tun"
+
+  - id: wiki_climate
+    category: wiki
+    description: "Wikipedia — Climate change overview"
+    url: "https://en.wikipedia.org/wiki/Climate_change"
+    query: "what are the main causes of climate change"
+    ground_truth:
+      must_contain_any:
+        - "greenhouse"
+        - "carbon"
+        - "CO2"
+        - "fossil"
+      must_contain_any_2:
+        - "temperature"
+        - "warming"
+        - "emission"
+
+  # --- GitHub ---
+  - id: github_fastapi
+    category: code
+    description: "GitHub README — FastAPI framework"
+    url: "https://github.com/fastapi/fastapi"
+    query: "how to install FastAPI and create a basic endpoint"
+    ground_truth:
+      must_contain_any:
+        - "pip install"
+        - "fastapi"
+        - "FastAPI"
+      must_contain_any_2:
+        - "@app"
+        - "uvicorn"
+        - "import"
+
+  # --- News / Articles ---
+  - id: bbc_news
+    category: news
+    description: "BBC News — front page headlines"
+    url: "https://www.bbc.com/news"
+    query: "what are the top news stories today"
+    ground_truth:
+      min_chunks_returned: 3
+
+  - id: reuters_article
+    category: news
+    description: "Reuters — tech news article"
+    url: "https://www.reuters.com/technology/artificial-intelligence/"
+    query: "what are the latest AI news headlines"
+    ground_truth:
+      must_contain_any:
+        - "AI"
+        - "artificial intelligence"
+        - "model"
+        - "tech"
+
+  # --- Product / Pricing ---
+  - id: github_pricing
+    category: product
+    description: "GitHub pricing page — plan comparison"
+    url: "https://github.com/pricing"
+    query: "how much does GitHub Team plan cost and what features are included"
+    ground_truth:
+      must_contain_any:
+        - "$"
+        - "Team"
+        - "Enterprise"
+
+  # --- Q&A ---
+  - id: so_python_venv
+    category: qa
+    description: "Stack Overflow — Python virtual environments"
+    url: "https://stackoverflow.com/questions/41573587/what-is-the-difference-between-venv-pyvenv-pyenv-virtualenv-virtualenvwrapper"
+    query: "what is the difference between venv and virtualenv in Python"
+    ground_truth:
+      must_contain_any:
+        - "venv"
+        - "virtualenv"
+      must_contain_any_2:
+        - "python"
+        - "Python"
+        - "pip"
+
+  # --- Financial ---
+  - id: google_finance
+    category: finance
+    description: "Google Finance — stock quote page"
+    url: "https://www.google.com/finance/quote/AAPL:NASDAQ"
+    query: "what is Apple's current stock price and recent performance"
+    ground_truth:
+      must_contain_any:
+        - "Apple"
+        - "AAPL"
+        - "$"
+
+  # --- Blog / Essay ---
+  - id: openai_blog
+    category: blog
+    description: "OpenAI blog — product announcement"
+    url: "https://openai.com/index/hello-gpt-4o/"
+    query: "what is GPT-4o and what are its capabilities"
+    ground_truth:
+      must_contain_any:
+        - "GPT-4o"
+        - "gpt-4o"
