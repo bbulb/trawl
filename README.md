@@ -50,6 +50,21 @@ that matter for your query, at ~1k tokens of output.
 trawl wins on every token-efficiency axis and runs entirely on your
 own infrastructure. In exchange you pay a real cost elsewhere:
 
+### External: WCXB dev (1,497 pages)
+
+Beyond the internal 12-case parity matrix, trawl's extraction stage is
+cross-validated against the [WCXB](https://github.com/Murrough-Foley/web-content-extraction-benchmark)
+public benchmark (CC-BY-4.0, 1,497 dev pages across 7 page types).
+
+| Extractor                         |   F1   |
+|-----------------------------------|--------|
+| trawl (`html_to_markdown`)        |  0.777 |
+| Trafilatura (same environment)    |  0.750 |
+
+Per-page-type breakdown and error counts: see
+[`benchmarks/wcxb/README.md`](benchmarks/wcxb/README.md) and run the
+benchmark locally to regenerate.
+
 ### When *not* to use trawl
 
 - **You want the whole page verbatim.** Selective retrieval is the

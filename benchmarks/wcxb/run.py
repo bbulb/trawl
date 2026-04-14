@@ -99,7 +99,7 @@ def evaluate_page(data_dir: Path, page_id: str) -> dict:
     evaluate_page_with_baseline().
     """
     html, gt = _load_page(Path(data_dir), page_id)
-    ground_truth_text = gt["ground_truth"]["main_content"]
+    ground_truth_text = gt["ground_truth"].get("main_content", "")
 
     trawl_out, t_ms, err = _run_extractor(html_to_markdown, html)
     scores = _score(trawl_out, ground_truth_text)
@@ -124,7 +124,9 @@ def evaluate_page_with_baseline(data_dir: Path, page_id: str) -> dict:
     """
     html, gt = _load_page(Path(data_dir), page_id)
     gt_body = gt["ground_truth"]
-    ground_truth_text = gt_body["main_content"]
+    # schema_version 2.0 pages occasionally omit main_content (snippet-only);
+    # fall back to empty string so scoring returns 0 rather than crashing.
+    ground_truth_text = gt_body.get("main_content", "")
     with_snips = gt_body.get("with") or []
     without_snips = gt_body.get("without") or []
 
