@@ -126,23 +126,63 @@ trawl 파이프라인에 직접 연결되는 것만 골랐다.
 
 ---
 
-## C1. Late chunking 도입 실험 &nbsp; — `status: pending`
+## C1. Late chunking 도입 실험 &nbsp; — `status: rejected (2026-04-15)`
 
-**요지.** `chunking.chunk_markdown`이 텍스트를 먼저 자르고 각각 임베딩하는
-대신, bge-m3로 전체 본문을 먼저 인코딩하고 토큰 시퀀스에서 chunk pooling.
-청크가 주변 문맥을 잃는 문제(특히 표·목록·연속 문단)를 줄임.
+**결론**: **No-go**. 2라운드 측정 후 기각. 브랜치 `late-chunking` 폐기.
 
-**기대 효과.** recall 증가, 특히 "fact가 문단 경계에 걸친" 케이스.
+### 시도한 것
 
-**검토 포인트.**
-- bge-m3의 현재 컨텍스트 한도와 `MAX_EMBED_INPUT_CHARS=1800` 제약의 충돌.
-- 450자 hard-cap을 유지할 것인가, chunk 경계 정의 자체를 바꿀 것인가.
-- parity matrix 12/12를 유지할 수 있는 수준의 변화인가, 아니면 ground
-  truth 재정의가 필요한가.
-- HyDE·reranker와의 상호작용 (late chunking 후 reranker 입력 포맷).
+스파이크 완전 구현 — `src/trawl/late_chunking.py` (per-token 임베딩 →
+char-span mean pool, 8K token truncate + 초과 청크 baseline fallback),
+`retrieval.py` 토글, 전용 `:8084` llama-server (`--pooling none`),
+`tests/test_pipeline_ranked.py` A/B 러너 (MRR + recall@k).
 
-**결정 후 다음 단계.** `src/trawl/chunking.py` + `retrieval.py` 실험 브랜치.
-12-case + WCXB 부분집합 비교.
+### 측정 결과 (12-case parity matrix A/B)
+
+| metric | baseline | late chunking | Δ |
+|---|---|---|---|
+| MRR | 0.884 | 0.838 | **−0.045** |
+| recall@5 | 0.955 | 0.909 | **−0.045** |
+| p50 latency | 6.1s | 7.7s | +26% |
+
+per-case: **arxiv_pdf MRR −0.250**, **korean_wiki_person recall@5 2/3 → 1/3**.
+나머지 10개는 동률.
+
+Jina 공식 구현(`jina-ai/late-chunking`) 대조에서 발견한 가장 유력한 차이
+"heading 정보 누락"을 round 2에서 heading outline preamble로 보완했으나
+**숫자 변동 0**. 가설 기각.
+
+### 교훈 (차후 재시도 시 체크)
+
+1. **Local HF vs remote llama-server**. Jina 레퍼런스는 로컬 transformers
+   로드 → tokenizer/model 동일 경로. 우리는 remote llama-server →
+   `/tokenize`와 `/embedding`의 토큰화가 재수행돼 CJK에서 ±5–10 토큰
+   drift. 관용 로직으로 우회했으나 재현성에 noise 잠재.
+2. **ubatch-size vs batch-size 혼동**. llama-server 에러 메시지가
+   "physical batch size" 라고 하지만 실제로는 `--batch-size`(logical)가
+   cap. `--pooling none` 은 입력 전체를 단일 physical batch로 forward해야
+   하므로 `--batch-size ≥ input_tokens` 필수.
+3. **bge-m3 vs jina-embeddings**. Jina 논문·구현은 jina-embeddings-v3
+   대상으로 튜닝. bge-m3 토큰 hidden state가 context-aware mean-pool
+   친화적으로 학습됐는지 불확실. C1 재시도 시 모델 선택부터 재검토.
+4. **Fallback 혼합의 부정적 효과**. 한 페이지 내에서 late-pooled 벡터와
+   baseline-pooled 벡터가 같은 top-k에 공존하면 ranking이 왜곡될 가능성.
+   측정 중 arxiv_pdf(71% fallback) 에서 일관적으로 관찰.
+5. **Query-side 불일치**. 쿼리는 baseline chunk-solo mean-pool, 청크는
+   late-pooled. 두 pool 방식이 cosine 공간에서 완전히 정합하지 않을 수
+   있음.
+
+### 재시도 조건
+
+- jina-embeddings-v3 도입 결정이 선다 (큰 infra 변화) OR
+- 위계 문서에 대한 recall 회귀가 production에서 실제로 문제로 부각 OR
+- heading-aware late chunking 새 기법이 학계에서 나옴.
+
+### 산출물 잔존 위치
+
+- 스펙: `docs/superpowers/specs/2026-04-14-late-chunking-design.md`
+- 플랜: `docs/superpowers/plans/2026-04-14-late-chunking.md`
+- 실측 결과 문서는 `late-chunking` 브랜치 삭제로 유실 (이 섹션에 요약만).
 
 **근거 논문.** arXiv:2409.04701, arXiv:2504.19754.
 
@@ -243,9 +283,8 @@ skip.
 
 ## 리뷰 순서 제안
 
-1. **C1 Late chunking** — 가장 확실한 기술적 업사이드, scope 안전.
-2. **C2 WCXB 외부 벤치** — 다른 모든 후보의 측정 기반이 됨, 먼저 깔면
-   C1/C3 실험이 쉬워짐.
+1. ~~**C1 Late chunking**~~ — **rejected 2026-04-15** (위 섹션 참조).
+2. ~~**C2 WCXB 외부 벤치**~~ — **merged 2026-04-14** (develop `e8015ff`).
 3. **C3 reranker fine-tune** — scope 민감, spike부터.
 4. **C4 Index-based** — 실측 miss rate 확인 후 판단.
 5. **C5 계층적 fetch** — scope/복잡도 가장 큼, 마지막.
