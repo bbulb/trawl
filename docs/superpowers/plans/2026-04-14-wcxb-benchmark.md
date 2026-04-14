@@ -1145,7 +1145,7 @@ git commit -m "feat(wcxb): add run_all orchestrator, argparse CLI, progress logg
 
 ## Task 7: Sanity check 경로 — Trafilatura default mode
 
-**Purpose:** Spec §Success criteria 요구사항. 마크다운 옵션 없이 default-mode Trafilatura로 한 번 더 돌려 upstream 공개 F1(0.958)과 ±0.02 이내 재현되는지 확인. 결과는 `raw.json`의 별도 필드에만 기록하고 메인 표엔 섞지 않는다.
+**Purpose:** Spec §Success criteria 요구사항. 마크다운 옵션 없이 default-mode Trafilatura로 한 번 더 돌려 WCXB dev 전체 공개 F1 **0.791** 과 **±0.025 이내** 재현되는지 확인. 결과는 `raw.json`의 별도 필드에만 기록하고 메인 표엔 섞지 않는다. (초기 설계 draft에 박혔던 "0.958"은 article-only 구버전 수치였으므로 쓰지 않는다.)
 
 **Files:**
 - Modify: `benchmarks/wcxb/run.py`
@@ -1180,8 +1180,10 @@ In `benchmarks/wcxb/run.py`, just above the `return { ... }` in `evaluate_page_w
 
 ```python
     # Sanity check: Trafilatura in default mode (no markdown flags), matching
-    # how WCXB upstream measured the published F1=0.958. Used once after a
-    # full run to verify the vendored evaluate.py reproduces the public number.
+    # how WCXB upstream measured the published dev-set F1=0.791. Used once
+    # after a full run to verify the vendored evaluate.py reproduces the
+    # public number. (Note: 0.958 that appeared in some earlier notes is the
+    # article-only sub-score, not the 7-type dev total — do not conflate.)
     sanity_out, s_ms, s_err = _run_extractor(
         lambda h: trafilatura.extract(h) or "", html
     )
@@ -1617,7 +1619,7 @@ Expected:
 
 - [ ] **Step 3: Sanity check — 공식 F1 재현 검증**
 
-`raw.json`에서 `sanity_traf_default.f1`의 평균이 upstream 공개값 0.958의 ±0.02 이내인지 확인:
+`raw.json`에서 `sanity_traf_default.f1`의 평균이 WCXB dev 전체 공개값 **0.791** 의 **±0.025 이내**인지 확인:
 
 ```bash
 python - <<'PY'
@@ -1626,15 +1628,17 @@ latest = max(glob.glob("benchmarks/results/wcxb_*/"), key=lambda p: p)
 entries = json.loads((pathlib.Path(latest) / "raw.json").read_text())
 ok = [e["sanity_traf_default"]["f1"] for e in entries if e["sanity_traf_default"]["error"] is None]
 mean = sum(ok) / len(ok)
-print(f"sanity traf-default mean F1 = {mean:.4f} (expected ~0.958)")
-assert 0.938 <= mean <= 0.978, f"sanity check failed: {mean}"
+print(f"sanity traf-default mean F1 = {mean:.4f} (expected ~0.791)")
+assert 0.766 <= mean <= 0.816, f"sanity check failed: {mean}"
 print("sanity: PASS")
 PY
 ```
 
-Expected: mean F1 within [0.938, 0.978], `sanity: PASS`.
+Expected: mean F1 within [0.766, 0.816], `sanity: PASS`. (Reference: 2026-04-14 실제 실행 측정치 0.773.)
 
 **If this fails**: do NOT proceed to Step 4. Debug the vendored `evaluate.py` or the Trafilatura default-mode call. Common causes: different tokenization vs upstream (e.g. case-folding), different default Trafilatura options between library versions. Record findings in a commit message on a fix branch.
+
+**Historical note:** 초기 설계 draft는 "0.958 ±0.02"를 기준으로 박았는데, 0.958은 WCXB가 공개한 **article-only** 서브 스코어였다. 우리가 돌리는 dev 전체(7 types)는 **0.791**이 upstream이 README에 명시한 숫자. 이 구분을 놓치지 말 것.
 
 - [ ] **Step 4: `report.md` 확인 후 README에 반영**
 

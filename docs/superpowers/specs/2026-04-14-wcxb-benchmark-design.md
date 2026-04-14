@@ -226,10 +226,15 @@ trafilatura: 2 / 1497 (ids: ...)
   README에 붙여넣을 수 있음.
 - **러너 sanity check**: `run.py` 내부에 Trafilatura **default-mode**
   (markdown 플래그 없이, upstream 공개 측정과 동일 조건) 보조 경로를 한 번
-  실행해 F1이 WCXB 공개 값(0.958)과 **±0.02 이내**로 재현되는지 확인.
-  이게 벗어나면 러너 구현 또는 vendor한 `evaluate.py`가 잘못된 것. 이
-  sanity check는 리포트에 `sanity: traf_default_f1 = 0.95x` 한 줄로만 남기고
-  메인 비교(marked 모드) 표와 섞지 않는다.
+  실행해 F1이 WCXB dev 전체 기준 공개 값 **0.791** 과 **±0.025 이내**로
+  재현되는지 확인. 이게 벗어나면 러너 구현 또는 vendor한 `evaluate.py`가
+  잘못된 것. 이 sanity check는 리포트에 `sanity: traf_default_f1 = 0.7xx`
+  한 줄로만 남기고 메인 비교(marked 모드) 표와 섞지 않는다.
+
+  > **주의**: 이 기준치는 WCXB dev 스플릿 1,497 pages 전체(7 page types)
+  > 기준이다. 초기 설계 문서에 잠시 박혔던 "0.958 ±0.02"는 **article-only
+  > 구버전 수치**였고, 전체 스플릿과 다른 숫자이므로 혼동 금지. 2026-04-14
+  > 실제 실행에서 측정값 0.773(±0.018 vs 0.791)으로 vendor 정상 확인됨.
 
 ## Out of scope / future
 
