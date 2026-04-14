@@ -1,0 +1,16 @@
+{
+  "schema_version": "2.0",
+  "url": "https://example.test/empty_sample",
+  "file_id": "empty_sample",
+  "_internal": {
+    "page_type": {
+      "primary": "article"
+    }
+  },
+  "ground_truth": {
+    "title": "",
+    "main_content": "",
+    "with": [],
+    "without": []
+  }
+}

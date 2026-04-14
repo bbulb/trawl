@@ -1,0 +1,19 @@
+{
+  "schema_version": "2.0",
+  "url": "https://example.test/product_sample",
+  "file_id": "product_sample",
+  "_internal": {
+    "page_type": {
+      "primary": "product"
+    }
+  },
+  "ground_truth": {
+    "title": "Pricing",
+    "main_content": "Starter\n$9/mo \u2014 includes basic features.\nPro\n$29/mo \u2014 includes advanced features.",
+    "with": [
+      "$9/mo",
+      "$29/mo"
+    ],
+    "without": []
+  }
+}
