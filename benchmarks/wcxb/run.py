@@ -12,9 +12,23 @@ import json
 import time
 from pathlib import Path
 
+import trafilatura
+
 from trawl.extraction import html_to_markdown
 
 from benchmarks.wcxb.evaluate import word_f1, get_page_type
+
+
+# Same options as trawl.extraction uses, minus favor_precision/favor_recall.
+# This isolates the effect of trawl's 3-way + BS fallback vs plain Trafilatura
+# markdown output on the same environment.
+_TRAF_KWARGS = dict(
+    output_format="markdown",
+    include_links=True,
+    include_images=False,
+    include_tables=True,
+    include_comments=False,
+)
 
 
 def _resolve_paths(data_dir: Path, page_id: str) -> tuple[Path, Path]:
@@ -60,6 +74,18 @@ def _score(output: str, ground_truth_text: str) -> dict:
     return {"f1": f, "precision": p, "recall": r}
 
 
+def _trafilatura_baseline(html: str) -> str:
+    return trafilatura.extract(html, **_TRAF_KWARGS) or ""
+
+
+def _count_snippets_hit(output: str, snippets: list[str]) -> int:
+    """Case-insensitive substring match count (mirrors WCXB's snippet_check)."""
+    if not output:
+        return 0
+    out_lower = output.lower()
+    return sum(1 for s in snippets if s and s.lower() in out_lower)
+
+
 def evaluate_page(data_dir: Path, page_id: str) -> dict:
     """Evaluate trawl on a single WCXB page.
 
@@ -82,5 +108,48 @@ def evaluate_page(data_dir: Path, page_id: str) -> dict:
             "time_ms": t_ms,
             "output_len": len(trawl_out),
             "error": err,
+        },
+    }
+
+
+def evaluate_page_with_baseline(data_dir: Path, page_id: str) -> dict:
+    """Evaluate trawl + Trafilatura baseline on a single WCXB page.
+
+    Returns the full raw.json schema entry per the design spec.
+    """
+    html, gt = _load_page(Path(data_dir), page_id)
+    gt_body = gt["ground_truth"]
+    ground_truth_text = gt_body["main_content"]
+    with_snips = gt_body.get("with") or []
+    without_snips = gt_body.get("without") or []
+
+    trawl_out, t_ms, t_err = _run_extractor(html_to_markdown, html)
+    traf_out, b_ms, b_err = _run_extractor(_trafilatura_baseline, html)
+
+    return {
+        "id": page_id,
+        "url": gt.get("url"),
+        "page_type": get_page_type(gt),
+        "trawl": {
+            **_score(trawl_out, ground_truth_text),
+            "time_ms": t_ms,
+            "output_len": len(trawl_out),
+            "error": t_err,
+        },
+        "trafilatura": {
+            **_score(traf_out, ground_truth_text),
+            "time_ms": b_ms,
+            "output_len": len(traf_out),
+            "error": b_err,
+        },
+        "with_snippets_hit": {
+            "trawl": _count_snippets_hit(trawl_out, with_snips),
+            "trafilatura": _count_snippets_hit(traf_out, with_snips),
+            "total": len(with_snips),
+        },
+        "without_snippets_hit": {
+            "trawl": _count_snippets_hit(trawl_out, without_snips),
+            "trafilatura": _count_snippets_hit(traf_out, without_snips),
+            "total": len(without_snips),
         },
     }

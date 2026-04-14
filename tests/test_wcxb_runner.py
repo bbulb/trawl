@@ -39,3 +39,31 @@ def test_evaluate_page_missing_files_raises():
     import pytest
     with pytest.raises(FileNotFoundError):
         evaluate_page(FIXTURES, "does_not_exist")
+
+
+from benchmarks.wcxb.run import evaluate_page_with_baseline
+
+
+def test_evaluate_page_with_baseline_has_both_extractors():
+    result = evaluate_page_with_baseline(FIXTURES, "article_sample")
+    assert "trawl" in result
+    assert "trafilatura" in result
+
+    traf = result["trafilatura"]
+    assert isinstance(traf["f1"], float)
+    assert traf["time_ms"] >= 0
+    assert isinstance(traf["output_len"], int)
+    assert traf["error"] is None
+
+
+def test_evaluate_page_with_baseline_snippet_counts_present():
+    result = evaluate_page_with_baseline(FIXTURES, "article_sample")
+    w = result["with_snippets_hit"]
+    wo = result["without_snippets_hit"]
+    # article_sample fixture has 2 with-snippets and 2 without-snippets
+    assert w["total"] == 2
+    assert wo["total"] == 2
+    assert 0 <= w["trawl"] <= w["total"]
+    assert 0 <= w["trafilatura"] <= w["total"]
+    assert 0 <= wo["trawl"] <= wo["total"]
+    assert 0 <= wo["trafilatura"] <= wo["total"]
