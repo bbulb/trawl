@@ -111,6 +111,15 @@ def test_run_all_type_filter(tmp_path):
     assert {e["id"] for e in raw} == {"product_sample"}
 
 
+def test_evaluate_page_with_baseline_includes_sanity_field():
+    result = evaluate_page_with_baseline(FIXTURES, "article_sample")
+    assert "sanity_traf_default" in result
+    sd = result["sanity_traf_default"]
+    assert "f1" in sd
+    assert isinstance(sd["f1"], float)
+    assert sd["error"] is None
+
+
 def test_run_all_no_baseline_sets_trafilatura_null(tmp_path):
     out_dir = tmp_path / "out"
     out_dir.mkdir()

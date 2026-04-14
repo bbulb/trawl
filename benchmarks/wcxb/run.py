@@ -131,6 +131,18 @@ def evaluate_page_with_baseline(data_dir: Path, page_id: str) -> dict:
     trawl_out, t_ms, t_err = _run_extractor(html_to_markdown, html)
     traf_out, b_ms, b_err = _run_extractor(_trafilatura_baseline, html)
 
+    # Sanity: Trafilatura in default mode (no markdown flags), matching how
+    # WCXB upstream measured the published F1=0.958. Used once after a full
+    # run to verify the vendored evaluate.py reproduces the public number.
+    sanity_out, s_ms, s_err = _run_extractor(
+        lambda h: trafilatura.extract(h) or "", html
+    )
+    sanity = {
+        **_score(sanity_out, ground_truth_text),
+        "time_ms": s_ms,
+        "error": s_err,
+    }
+
     return {
         "id": page_id,
         "url": gt.get("url"),
@@ -157,6 +169,7 @@ def evaluate_page_with_baseline(data_dir: Path, page_id: str) -> dict:
             "trafilatura": _count_snippets_hit(traf_out, without_snips),
             "total": len(without_snips),
         },
+        "sanity_traf_default": sanity,
     }
 
 
