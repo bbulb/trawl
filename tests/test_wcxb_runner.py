@@ -67,3 +67,54 @@ def test_evaluate_page_with_baseline_snippet_counts_present():
     assert 0 <= w["trafilatura"] <= w["total"]
     assert 0 <= wo["trawl"] <= wo["total"]
     assert 0 <= wo["trafilatura"] <= wo["total"]
+
+
+import json as _json
+from benchmarks.wcxb.run import run_all
+
+
+def test_run_all_writes_raw_and_report(tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    exit_code = run_all(
+        data_dir=FIXTURES,
+        out_dir=out_dir,
+        limit=None,
+        type_filter=None,
+        no_baseline=False,
+    )
+    assert exit_code == 0
+
+    raw = _json.loads((out_dir / "raw.json").read_text())
+    assert isinstance(raw, list)
+    # fixture has 3 samples — all should be processed
+    assert {e["id"] for e in raw} == {"article_sample", "product_sample", "empty_sample"}
+
+    report = (out_dir / "report.md").read_text()
+    assert "# WCXB" in report
+    assert "## Overall" in report
+
+
+def test_run_all_respects_limit(tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    run_all(data_dir=FIXTURES, out_dir=out_dir, limit=1, type_filter=None, no_baseline=False)
+    raw = _json.loads((out_dir / "raw.json").read_text())
+    assert len(raw) == 1
+
+
+def test_run_all_type_filter(tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    run_all(data_dir=FIXTURES, out_dir=out_dir, limit=None, type_filter="product", no_baseline=False)
+    raw = _json.loads((out_dir / "raw.json").read_text())
+    assert {e["id"] for e in raw} == {"product_sample"}
+
+
+def test_run_all_no_baseline_sets_trafilatura_null(tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    run_all(data_dir=FIXTURES, out_dir=out_dir, limit=None, type_filter=None, no_baseline=True)
+    raw = _json.loads((out_dir / "raw.json").read_text())
+    for e in raw:
+        assert e["trafilatura"] is None
