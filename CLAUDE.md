@@ -117,6 +117,9 @@ from trawl import fetch_relevant
 r = fetch_relevant('https://example.com/', 'what is this')
 print(r.chunks)
 "
+
+# WCXB external extraction benchmark (one-shot)
+python benchmarks/wcxb/fetch.py && python benchmarks/wcxb/run.py
 ```
 
 ## Architecture pointer
@@ -170,6 +173,12 @@ benchmarks/
   run_benchmark.py               trawl (base/profile/cached) vs Jina runner
   profile_eval_cases.yaml        36 cases for VLM profile eval
   profile_eval.py                profile generation quality evaluator
+  wcxb/                          external WCXB extraction benchmark (Phase 1)
+    fetch.py                       snapshot download + hash verify
+    run.py                         runner (trawl + Trafilatura baseline)
+    aggregate.py                   summary + report rendering
+    evaluate.py                    vendored WCXB word-F1 evaluator
+    manifest.json                  pinned SHA-256 manifest of dev split
   results/                       gitignored benchmark outputs
 
 examples/

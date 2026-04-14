@@ -19,5 +19,8 @@ tests/results/*.json
 # benchmark outputs
 benchmarks/results/
 
+# WCXB benchmark data (downloaded, not redistributed)
+benchmarks/wcxb/data/
+
 # git worktrees
 .worktrees/
