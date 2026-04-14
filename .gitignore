@@ -18,3 +18,6 @@ tests/results/*.json
 
 # benchmark outputs
 benchmarks/results/
+
+# git worktrees
+.worktrees/
