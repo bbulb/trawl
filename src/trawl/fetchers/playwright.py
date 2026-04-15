@@ -44,6 +44,7 @@ class FetchResult:
     fetcher: str
     elapsed_ms: int
     error: str | None = None
+    content_type: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -128,10 +129,10 @@ def _open_context(
     wait_for_ms: int,
     timeout_s: float,
     user_agent: str | None,
-) -> Iterator[tuple[BrowserContext, Page, str]]:
+) -> Iterator[tuple[BrowserContext, Page, str, str | None]]:
     """Internal helper: open a stealth BrowserContext, navigate to `url`,
-    yield (context, page, html). The context is closed in this generator's
-    finally block when the caller exits the `with` block.
+    yield (context, page, html, content_type). The context is closed in this
+    generator's finally block when the caller exits the `with` block.
 
     Uses `networkidle` with half the total timeout, falling back to
     `domcontentloaded` on PlaywrightTimeoutError so Cloudflare-protected
@@ -149,14 +150,25 @@ def _open_context(
     try:
         page = context.new_page()
         goto_timeout_ms = int(timeout_s * 1000)
+        response = None
         try:
-            page.goto(url, wait_until="networkidle", timeout=goto_timeout_ms // 2)
+            response = page.goto(
+                url, wait_until="networkidle", timeout=goto_timeout_ms // 2
+            )
         except PlaywrightTimeoutError:
-            page.goto(url, wait_until="domcontentloaded", timeout=goto_timeout_ms)
+            response = page.goto(
+                url, wait_until="domcontentloaded", timeout=goto_timeout_ms
+            )
         if wait_for_ms > 0:
             page.wait_for_timeout(wait_for_ms)
         html = page.content()
-        yield context, page, html
+        content_type = None
+        if response is not None:
+            try:
+                content_type = response.header_value("content-type")
+            except Exception:
+                content_type = None
+        yield context, page, html, content_type
     finally:
         try:
             context.close()
@@ -184,7 +196,7 @@ def fetch(
                 wait_for_ms=wait_for_ms,
                 timeout_s=timeout_s,
                 user_agent=user_agent,
-            ) as (_ctx, _page, html):
+            ) as (_ctx, _page, html, content_type):
                 return FetchResult(
                     url=url,
                     html=html,
@@ -192,6 +204,7 @@ def fetch(
                     raw_html=html,
                     fetcher="playwright",
                     elapsed_ms=int((time.monotonic() - t0) * 1000),
+                    content_type=content_type,
                 )
         except PlaywrightTimeoutError as e:
             return FetchResult(
@@ -238,7 +251,7 @@ def render_session(
             wait_for_ms=wait_for_ms,
             timeout_s=timeout_s,
             user_agent=user_agent,
-        ) as (_ctx, page, html):
+        ) as (_ctx, page, html, _content_type):
             yield RenderResult(
                 url=url,
                 page=page,

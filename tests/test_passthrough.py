@@ -137,3 +137,28 @@ def test_fetch_truncation(http_server, monkeypatch):
     assert r.ok
     assert r.truncated is True
     assert len(r.raw_bytes) == 1024
+
+
+from trawl.fetchers.playwright import FetchResult
+
+
+def test_playwright_fetch_result_has_content_type():
+    r = FetchResult(
+        url="https://x/",
+        html="",
+        markdown="",
+        raw_html="",
+        fetcher="playwright",
+        elapsed_ms=0,
+    )
+    assert r.content_type is None
+    r2 = FetchResult(
+        url="https://x/",
+        html="",
+        markdown="",
+        raw_html="",
+        fetcher="playwright",
+        elapsed_ms=0,
+        content_type="application/json",
+    )
+    assert r2.content_type == "application/json"
