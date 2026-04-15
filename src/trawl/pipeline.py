@@ -79,6 +79,7 @@ class PipelineResult:
     rerank_ms: int = 0
     content_type: str | None = None
     truncated: bool = False
+    page_title: str = ""
 
     @property
     def output_chars(self) -> int:
@@ -256,6 +257,10 @@ def _build_profile_result(
     chunks = chunking.chunk_markdown(md)
     chunk_ms = int((time.monotonic() - t_chunk) * 1000)
 
+    # Profile path operates on a subtree; the full-page <title> isn't
+    # available here, so fall back to markdown H1 only.
+    page_title = extraction.extract_title(html="", markdown=md)
+
     # Fields shared by every return from this function.
     base_kwargs = {
         "url": url,
@@ -270,6 +275,7 @@ def _build_profile_result(
         "hyde_text": "",
         "profile_used": True,
         "profile_hash": profile.url_hash,
+        "page_title": page_title,
     }
 
     rerank_ms = 0
@@ -295,7 +301,9 @@ def _build_profile_result(
             )
         if use_rerank and retrieved.scored:
             t_rr = time.monotonic()
-            final_scored = reranking.rerank(query, retrieved.scored, k=chosen_k)
+            final_scored = reranking.rerank(
+                query, retrieved.scored, k=chosen_k, page_title=page_title
+            )
             rerank_ms = int((time.monotonic() - t_rr) * 1000)
         else:
             final_scored = retrieved.scored
@@ -724,6 +732,11 @@ def _run_full_pipeline(
     chunks = chunking.chunk_markdown(markdown)
     chunk_ms = int((time.monotonic() - t_chunk) * 1000)
 
+    page_title = extraction.extract_title(
+        html=getattr(fetched, "html", "") or "",
+        markdown=markdown,
+    )
+
     # 3. Optional HyDE
     extras: list[str] = []
     hyde_text = ""
@@ -755,7 +768,9 @@ def _run_full_pipeline(
     rerank_ms = 0
     if use_rerank and retrieved.scored:
         t_rerank = time.monotonic()
-        final_scored = reranking.rerank(query, retrieved.scored, k=chosen_k)
+        final_scored = reranking.rerank(
+            query, retrieved.scored, k=chosen_k, page_title=page_title
+        )
         rerank_ms = int((time.monotonic() - t_rerank) * 1000)
     else:
         final_scored = retrieved.scored
@@ -777,6 +792,7 @@ def _run_full_pipeline(
         path="full_page_retrieval",
         rerank_used=use_rerank,
         rerank_ms=rerank_ms,
+        page_title=page_title,
     )
 
 
