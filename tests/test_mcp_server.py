@@ -15,9 +15,31 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+
+class _PassthroughHandler(BaseHTTPRequestHandler):
+    def log_message(self, *a, **kw):
+        pass
+
+    def do_GET(self):
+        body = b'{"mcp": "passthrough"}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def _start_local_server() -> tuple[str, ThreadingHTTPServer]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _PassthroughHandler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{port}", server
 
 
 async def run() -> int:
@@ -64,6 +86,25 @@ async def run() -> int:
                 f"fetcher={payload.get('fetcher_used', payload.get('fetcher'))}"
             )
             print(f"   first chunk text[:120]: {payload['chunks'][0]['text'][:120]!r}")
+
+            base, server = _start_local_server()
+            try:
+                print("→ calling fetch_page on local JSON endpoint")
+                call_result = await session.call_tool(
+                    "fetch_page",
+                    {"url": f"{base}/data.json"},
+                )
+                assert call_result.content, "empty content returned"
+                payload = json.loads(call_result.content[0].text)
+                print(f"   passthrough payload keys: {sorted(payload.keys())}")
+                assert payload["ok"] is True, f"passthrough call failed: {payload.get('error')}"
+                assert payload["path"] == "raw_passthrough", payload.get("path")
+                assert payload["content_type"] == "application/json"
+                assert payload["truncated"] is False
+                assert payload["chunks"][0]["text"] == '{"mcp": "passthrough"}'
+            finally:
+                server.shutdown()
+                server.server_close()
 
     print("\nOK: trawl-mcp stdio server smoke test passed.")
     return 0
