@@ -58,7 +58,8 @@ Wikipedia/passthrough 전용 fetcher 경로, full page retrieval 경로
 
 - `TRAWL_TELEMETRY=1` → 활성화. 미설정/`0` → `record()`는 즉시
   return.
-- `TRAWL_TELEMETRY_PATH` → 기본 `~/.trawl/telemetry.jsonl`.
+- `TRAWL_TELEMETRY_PATH` → 기본 `~/.cache/trawl/telemetry.jsonl`
+  (다른 trawl 캐시와 동일 디렉터리).
 - `TRAWL_TELEMETRY_MAX_BYTES` → 기본 `67108864` (64 MB).
 - 디렉터리 없으면 `mkdir(parents=True, exist_ok=True)` 후
   `chmod 0o700`. 파일 최초 생성 시 `chmod 0o600`.
@@ -169,7 +170,7 @@ Race: 두 프로세스가 동시에 rename을 시도하면 한 쪽이 실패 가
 
 ```python
 import pandas as pd
-df = pd.read_json("~/.trawl/telemetry.jsonl", lines=True)
+df = pd.read_json("~/.cache/trawl/telemetry.jsonl", lines=True)
 
 # hit/miss 비율
 df["profile_used"].mean()

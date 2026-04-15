@@ -399,7 +399,7 @@ speculation. Don't implement speculatively.
 ## Telemetry (optional)
 
 Opt-in JSONL collector for `fetch_relevant()` calls. Off by default.
-Activated with `TRAWL_TELEMETRY=1`; writes to `~/.trawl/telemetry.jsonl`
+Activated with `TRAWL_TELEMETRY=1`; writes to `~/.cache/trawl/telemetry.jsonl`
 (override with `TRAWL_TELEMETRY_PATH`). Single-generation size rotation
 at `TRAWL_TELEMETRY_MAX_BYTES` (default 64 MB) — older data moves to
 `telemetry.jsonl.1`.

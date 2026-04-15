@@ -78,7 +78,7 @@ def record(result: "PipelineResult") -> None:
         logger.warning("telemetry record failed: %s", e)
 
 
-DEFAULT_PATH = "~/.trawl/telemetry.jsonl"
+DEFAULT_PATH = "~/.cache/trawl/telemetry.jsonl"
 DEFAULT_MAX_BYTES = 64 * 1024 * 1024  # 64 MB
 
 
@@ -117,11 +117,9 @@ def _target_path() -> Path:
 
 def _write_event(result: "PipelineResult") -> None:
     path = _target_path()
+    # Parent directory may be shared with other trawl caches
+    # (profiles, visits) — don't touch its permissions.
     path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(path.parent, 0o700)
-    except OSError:
-        pass
     _maybe_rotate(path)
     event = _build_event(result)
     line = json.dumps(event, ensure_ascii=False) + "\n"
