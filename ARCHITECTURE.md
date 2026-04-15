@@ -396,6 +396,22 @@ Full results: `benchmarks/results/`.
 Anything on this list that's not justified by real-usage data is
 speculation. Don't implement speculatively.
 
+## Telemetry (optional)
+
+Opt-in JSONL collector for `fetch_relevant()` calls. Off by default.
+Activated with `TRAWL_TELEMETRY=1`; writes to `~/.trawl/telemetry.jsonl`
+(override with `TRAWL_TELEMETRY_PATH`). Single-generation size rotation
+at `TRAWL_TELEMETRY_MAX_BYTES` (default 64 MB) — older data moves to
+`telemetry.jsonl.1`.
+
+Each line captures host, URL (plaintext), query SHA-1 prefix (query
+plaintext is never stored), fetcher path, profile hit/miss, rerank and
+HyDE flags, and latency/size breakdown. Full schema: see
+`docs/superpowers/specs/2026-04-15-c4-telemetry-design.md`.
+
+Purpose: feed the C4 (`notes/RESEARCH.md`) decision on whether
+index-based extraction as a profile fallback has a problem to solve.
+
 ## Provenance
 
 trawl is the packaged form of work that lived across three spikes:
