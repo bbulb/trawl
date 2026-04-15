@@ -8,9 +8,11 @@ docs/superpowers/specs/2026-04-15-c4-telemetry-design.md.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -76,5 +78,28 @@ def record(result: "PipelineResult") -> None:
         logger.warning("telemetry record failed: %s", e)
 
 
+DEFAULT_PATH = "~/.trawl/telemetry.jsonl"
+
+
+def _target_path() -> Path:
+    raw = os.environ.get("TRAWL_TELEMETRY_PATH") or DEFAULT_PATH
+    return Path(raw).expanduser()
+
+
 def _write_event(result: "PipelineResult") -> None:
-    raise NotImplementedError
+    path = _target_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path.parent, 0o700)
+    except OSError:
+        pass
+    event = _build_event(result)
+    line = json.dumps(event, ensure_ascii=False) + "\n"
+    newly_created = not path.exists()
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(line)
+    if newly_created:
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass

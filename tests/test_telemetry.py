@@ -65,3 +65,32 @@ def test_build_event_fields():
     assert "query" not in event
     assert "chunks" not in event
     assert "hyde_text" not in event
+
+
+def test_record_appends_jsonl(tmp_path: Path, monkeypatch):
+    target = tmp_path / "t.jsonl"
+    monkeypatch.setenv("TRAWL_TELEMETRY", "1")
+    monkeypatch.setenv("TRAWL_TELEMETRY_PATH", str(target))
+
+    telemetry.record(_sample_result(url="https://a.example.com/x", query="q1"))
+    telemetry.record(_sample_result(url="https://b.example.com/y", query="q2"))
+    telemetry.record(_sample_result(url="https://c.example.com/z", query="q3"))
+
+    assert target.exists()
+    lines = target.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3
+    for line in lines:
+        event = json.loads(line)
+        assert event["schema"] == 1
+        assert event["host"].endswith("example.com")
+
+
+def test_record_creates_directory(tmp_path: Path, monkeypatch):
+    target = tmp_path / "nested" / "dir" / "t.jsonl"
+    monkeypatch.setenv("TRAWL_TELEMETRY", "1")
+    monkeypatch.setenv("TRAWL_TELEMETRY_PATH", str(target))
+
+    telemetry.record(_sample_result())
+
+    assert target.exists()
+    assert target.parent.is_dir()
