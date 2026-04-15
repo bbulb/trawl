@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,10 @@ import pytest
 
 from trawl import telemetry
 from trawl.pipeline import PipelineResult
+
+
+def hashlib_sha1_prefix(s: str) -> str:
+    return hashlib.sha1(s.encode("utf-8")).hexdigest()[:16]
 
 
 def _sample_result(url: str = "https://example.com/a", query: str = "what") -> PipelineResult:
@@ -119,12 +124,9 @@ def test_rotation_when_exceeds_max_bytes(tmp_path: Path, monkeypatch):
     assert last_event["query_sha1"] == hashlib_sha1_prefix("third")
 
 
-def hashlib_sha1_prefix(s: str) -> str:
-    import hashlib as _h
-    return _h.sha1(s.encode("utf-8")).hexdigest()[:16]
-
-
 def test_record_swallows_io_errors(tmp_path: Path, monkeypatch, caplog):
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("cannot test permission denial as root")
     # Point at a path whose parent cannot be created.
     target = tmp_path / "ro" / "t.jsonl"
     tmp_path.chmod(0o500)  # make tmp_path read+execute only
