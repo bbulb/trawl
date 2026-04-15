@@ -17,16 +17,27 @@ COPY src ./src
 # Chromium + runtime libs are already in the base image at /ms-playwright.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# trawl expects these at runtime. Compose overrides these at service
-# definition time to point at the host llama-servers.
-ENV TRAWL_EMBED_URL=http://host.docker.internal:8081/v1
-ENV TRAWL_EMBED_MODEL=bge-m3-Q8_0.gguf
-ENV TRAWL_RERANK_URL=http://host.docker.internal:8083/v1
-ENV TRAWL_RERANK_MODEL=bge-reranker-v2-m3
-ENV TRAWL_HYDE_URL=http://host.docker.internal:8082/v1
-ENV TRAWL_HYDE_MODEL=gemma-4-E4B-it-Q8_0.gguf
-ENV TRAWL_VLM_URL=http://host.docker.internal:8080/v1
-ENV TRAWL_VLM_MODEL=gemma
+# trawl runtime config — inject via `docker run -e ...`, compose
+# `environment:`, or `--env-file .env`. Not baked into the image so the
+# same image works across local-dev, LAN llama-servers, and remote hosts.
+# See .env.example for the full list.
+#
+# Required:
+#   TRAWL_EMBED_URL    e.g. http://host.docker.internal:8081/v1
+#   TRAWL_EMBED_MODEL  e.g. bge-m3
+#
+# Optional (feature degrades or is unused when absent):
+#   TRAWL_RERANK_URL / TRAWL_RERANK_MODEL   — cross-encoder reranker;
+#                                             falls back to cosine-only
+#   TRAWL_HYDE_URL   / TRAWL_HYDE_MODEL     — HyDE query expansion (off by default)
+#   TRAWL_VLM_URL    / TRAWL_VLM_MODEL      — required for profile_page;
+#                                             unset = tool hidden from MCP list
+#   TRAWL_PASSTHROUGH_MAX_BYTES             — default 262144 (256 KB)
+#   TRAWL_HYDE_SLOT / TRAWL_VLM_SLOT        — llama-server slot pinning
+#
+# Profile/visit cache is persisted at /root/.cache/trawl via VOLUME below.
+# Mount from host to retain state across container lifecycle:
+#   docker run -v ~/.cache/trawl:/root/.cache/trawl ...
 
 EXPOSE 8765
 
