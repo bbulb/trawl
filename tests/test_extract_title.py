@@ -44,3 +44,9 @@ def test_malformed_html_does_not_raise():
     # Either returns "Broken" or "" -- both acceptable; must not raise.
     out = extract_title(html=html, markdown="")
     assert isinstance(out, str)
+
+
+def test_html_title_with_nested_tags():
+    # <title> with mixed content must return clean text, not raw markup.
+    html = "<html><head><title><b>Site</b> - Page</title></head><body>x</body></html>"
+    assert extract_title(html=html, markdown="") == "Site - Page"

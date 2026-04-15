@@ -97,6 +97,7 @@ def _bs_fallback(html: str) -> str:
 
 
 _MD_H1_RE = re.compile(r"^# +(.+?)\s*$", re.MULTILINE)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def extract_title(*, html: str, markdown: str) -> str:
@@ -112,11 +113,10 @@ def extract_title(*, html: str, markdown: str) -> str:
     if html:
         try:
             soup = BeautifulSoup(html, "html.parser")
-            t = soup.title
-            if t and t.string:
-                stripped = t.string.strip()
-                if stripped:
-                    return stripped
+            if soup.title:
+                text = _HTML_TAG_RE.sub("", soup.title.get_text(strip=True)).strip()
+                if text:
+                    return text
         except Exception:
             pass
 
