@@ -162,3 +162,38 @@ def test_playwright_fetch_result_has_content_type():
         content_type="application/json",
     )
     assert r2.content_type == "application/json"
+
+
+from trawl import fetch_relevant
+
+
+def test_fetch_relevant_passthrough_json(http_server):
+    base, handler = http_server
+    body = b'{"hello": "world"}'
+    handler.response_body = body
+    handler.response_ct = "application/json"
+    handler.response_status = 200
+
+    r = fetch_relevant(f"{base}/data.json")
+    assert r.error is None, r.error
+    assert r.path == "raw_passthrough"
+    assert r.content_type == "application/json"
+    assert r.truncated is False
+    assert r.fetcher_used == "passthrough"
+    assert len(r.chunks) == 1
+    assert r.chunks[0]["text"] == body.decode("utf-8")
+    assert r.chunks[0]["chunk_index"] == 0
+    assert r.n_chunks_total == 1
+
+
+def test_fetch_relevant_passthrough_truncated(http_server, monkeypatch):
+    from trawl.fetchers import passthrough as pt_mod
+    monkeypatch.setattr(pt_mod, "PASSTHROUGH_MAX_BYTES", 32)
+    base, handler = http_server
+    handler.response_body = b'{"k":"' + b"x" * 100 + b'"}'
+    handler.response_ct = "application/json"
+    handler.response_status = 200
+    r = fetch_relevant(f"{base}/big.json")
+    assert r.truncated is True
+    assert len(r.chunks[0]["text"]) == 32
+    assert r.error is None  # truncation is not an error

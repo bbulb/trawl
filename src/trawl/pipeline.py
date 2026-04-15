@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass
 from urllib.parse import urlsplit
 
 from . import chunking, extraction, hyde, reranking, retrieval
-from .fetchers import github, pdf, playwright, stackexchange, wikipedia, youtube
+from .fetchers import github, passthrough, pdf, playwright, stackexchange, wikipedia, youtube
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,65 @@ def _chunk_to_dict(chunk, *, score: float | None) -> dict:
         "chunk_index": chunk.chunk_index,
         "score": score,
     }
+
+
+def _decode_passthrough_body(body: bytes, content_type: str | None) -> str:
+    """Decode passthrough bytes honoring `charset=` when present, else UTF-8.
+
+    `errors="replace"` because the raw body might be binary-tainted
+    (e.g. a JSON server returning malformed UTF-8); we prefer returning
+    something readable over crashing the pipeline.
+    """
+    charset = "utf-8"
+    if content_type:
+        for part in content_type.split(";"):
+            part = part.strip().lower()
+            if part.startswith("charset="):
+                charset = part.split("=", 1)[1].strip() or "utf-8"
+                break
+    try:
+        return body.decode(charset, errors="replace")
+    except LookupError:
+        return body.decode("utf-8", errors="replace")
+
+
+def _build_passthrough_result(
+    url: str,
+    query: str | None,
+    *,
+    body: bytes,
+    content_type: str | None,
+    fetcher_name: str,
+    t_start: float,
+    fetch_ms: int,
+    truncated: bool,
+) -> PipelineResult:
+    text = _decode_passthrough_body(body, content_type)
+    chunk = {
+        "text": text,
+        "heading": None,
+        "char_count": len(text),
+        "chunk_index": 0,
+        "score": None,
+    }
+    return PipelineResult(
+        url=url,
+        query=query or "",
+        fetcher_used=fetcher_name,
+        fetch_ms=fetch_ms,
+        chunk_ms=0,
+        retrieval_ms=0,
+        total_ms=int((time.monotonic() - t_start) * 1000),
+        page_chars=len(text),
+        n_chunks_total=1,
+        structured_path=False,
+        hyde_used=False,
+        hyde_text="",
+        chunks=[chunk],
+        path="raw_passthrough",
+        content_type=content_type,
+        truncated=truncated,
+    )
 
 
 def _error_result(
@@ -505,6 +564,29 @@ def fetch_relevant(
     if transfer_result is not None:
         return transfer_result
 
+    # Passthrough short-circuit: structured-data URLs (JSON, XML, RSS, Atom)
+    # don't need a query — the raw bytes are the answer. Check before the
+    # query=None guard so callers can omit query for these URLs.
+    if passthrough.matches(url):
+        pt = passthrough.fetch(url)
+        if pt.ok:
+            return _build_passthrough_result(
+                url,
+                query,
+                body=pt.raw_bytes,
+                content_type=pt.content_type,
+                fetcher_name="passthrough",
+                t_start=t_start,
+                fetch_ms=pt.elapsed_ms,
+                truncated=pt.truncated,
+            )
+        # Fetch failed — fall through to the normal pipeline (which also
+        # has a passthrough check, but that path requires a query).
+        logger.info(
+            "passthrough URL hint matched but fetch failed (%s); falling through",
+            pt.error,
+        )
+
     # Full pipeline (existing behavior + query=None guard + suggest_profile).
     if not query:
         visit_count = get_visit_count(url) if get_visit_count else 0
@@ -541,6 +623,26 @@ def fetch_relevant(
     return result
 
 
+def _fetch_html(url: str) -> tuple[object, str, str]:
+    """Run the API-fetcher chain, falling back to Playwright + Trafilatura.
+
+    Returns (fetched, markdown, fetcher_name). `fetched` is whatever
+    the chosen fetcher produced; callers use its `.ok`, `.error`,
+    `.elapsed_ms`, and (for Playwright) `.content_type`.
+    """
+    for fetcher_mod, native_name in _API_FETCHERS:
+        if fetcher_mod.matches(url):
+            fetched = fetcher_mod.fetch(url)
+            if fetched.fetcher == native_name:
+                return fetched, fetched.markdown, native_name
+            # API fetcher fell back to playwright — re-extract.
+            markdown = extraction.html_to_markdown(fetched.html) if fetched.ok else ""
+            return fetched, markdown, "playwright+trafilatura"
+    fetched = playwright.fetch(url)
+    markdown = extraction.html_to_markdown(fetched.html) if fetched.ok else ""
+    return fetched, markdown, "playwright+trafilatura"
+
+
 def _run_full_pipeline(
     url: str,
     query: str,
@@ -551,27 +653,31 @@ def _run_full_pipeline(
     t_start: float,
 ) -> PipelineResult:
     """Non-profile pipeline: fetch → extract → chunk → (HyDE) → retrieve → rerank."""
-    # 1. Fetch → markdown
+    # 1. Fetch → markdown (or short-circuit for PDF / passthrough)
     if _is_pdf_url(url):
         fetched = pdf.fetch(url)
         markdown = fetched.markdown
         fetcher_name = "pdf"
+    elif passthrough.matches(url):
+        pt = passthrough.fetch(url)
+        if pt.ok:
+            return _build_passthrough_result(
+                url,
+                query,
+                body=pt.raw_bytes,
+                content_type=pt.content_type,
+                fetcher_name="passthrough",
+                t_start=t_start,
+                fetch_ms=pt.elapsed_ms,
+                truncated=pt.truncated,
+            )
+        logger.info(
+            "passthrough URL hint matched but fetch failed (%s); falling through",
+            pt.error,
+        )
+        fetched, markdown, fetcher_name = _fetch_html(url)
     else:
-        for fetcher_mod, native_name in _API_FETCHERS:
-            if fetcher_mod.matches(url):
-                fetched = fetcher_mod.fetch(url)
-                if fetched.fetcher == native_name:
-                    markdown = fetched.markdown
-                    fetcher_name = native_name
-                else:
-                    # API fetcher fell back to playwright — re-extract.
-                    markdown = extraction.html_to_markdown(fetched.html) if fetched.ok else ""
-                    fetcher_name = "playwright+trafilatura"
-                break
-        else:
-            fetched = playwright.fetch(url)
-            markdown = extraction.html_to_markdown(fetched.html) if fetched.ok else ""
-            fetcher_name = "playwright+trafilatura"
+        fetched, markdown, fetcher_name = _fetch_html(url)
 
     if not fetched.ok or not markdown:
         return _error_result(
