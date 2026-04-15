@@ -5,13 +5,16 @@ FROM mcr.microsoft.com/playwright/python:v1.47.0-jammy
 WORKDIR /app
 
 # Install Python deps first so source changes do not invalidate the dep layer.
+# Stub packages let `pip install -e .` resolve deps before real source is copied.
 COPY pyproject.toml README.md ./
+RUN mkdir -p src/trawl src/trawl_mcp && \
+    touch src/trawl/__init__.py src/trawl_mcp/__init__.py && \
+    pip install --no-cache-dir -e .
+
+# Real source — only this layer rebuilds on code changes.
 COPY src ./src
 
-RUN pip install --no-cache-dir -e . && \
-    playwright install --with-deps chromium
-
-# Playwright browsers are installed above under the default path.
+# Chromium + runtime libs are already in the base image at /ms-playwright.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # trawl expects these at runtime. Compose overrides these at service
