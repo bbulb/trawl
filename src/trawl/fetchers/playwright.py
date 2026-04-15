@@ -91,15 +91,30 @@ class _BrowserHolder:
     def ensure(self) -> Browser:
         if self._browser is not None:
             return self._browser
-        self._pw = Stealth().use_sync(sync_playwright()).__enter__()
-        self._browser = self._pw.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-            ],
-        )
+        pw = Stealth().use_sync(sync_playwright()).__enter__()
+        try:
+            browser = pw.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                ],
+            )
+        except Exception:
+            # launch() failing (missing browser binary, libs, sandbox flags)
+            # leaves the Playwright context half-initialised. Stop it here
+            # so the next ensure() call starts clean; otherwise the leftover
+            # greenlet dispatcher and event loop poison the worker thread,
+            # causing every subsequent sync_playwright() call to mis-report
+            # "Sync API inside asyncio loop" instead of the real error.
+            try:
+                pw.stop()
+            except Exception:
+                pass
+            raise
+        self._pw = pw
+        self._browser = browser
         atexit.register(self.teardown)
         return self._browser
 
