@@ -24,3 +24,6 @@ benchmarks/wcxb/data/
 
 # git worktrees
 .worktrees/
+
+# local notes / research scratchpads (not for upstream)
+notes/
