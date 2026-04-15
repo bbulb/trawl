@@ -679,6 +679,35 @@ def _run_full_pipeline(
     else:
         fetched, markdown, fetcher_name = _fetch_html(url)
 
+    # 1b. Playwright-path post-detection passthrough. When a suffix-less
+    # URL returns JSON/XML, Chromium wraps it in a viewer DOM — so we
+    # discard the rendered HTML and re-fetch the raw bytes via httpx.
+    ct = getattr(fetched, "content_type", None)
+    if passthrough.is_passthrough_content_type(ct):
+        pt = passthrough.fetch_raw_body(url)
+        if pt.ok:
+            return _build_passthrough_result(
+                url,
+                query,
+                body=pt.raw_bytes,
+                content_type=ct or pt.content_type,
+                fetcher_name="playwright+passthrough",
+                t_start=t_start,
+                fetch_ms=fetched.elapsed_ms + pt.elapsed_ms,
+                truncated=pt.truncated,
+            )
+        return _error_result(
+            url,
+            query or "",
+            f"passthrough raw body fetch failed: {pt.error}",
+            t_start,
+            fetcher_used="playwright+passthrough",
+            fetch_ms=fetched.elapsed_ms + pt.elapsed_ms,
+            page_chars=0,
+            path="raw_passthrough",
+            content_type=ct,
+        )
+
     if not fetched.ok or not markdown:
         return _error_result(
             url,

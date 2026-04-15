@@ -197,3 +197,79 @@ def test_fetch_relevant_passthrough_truncated(http_server, monkeypatch):
     assert r.truncated is True
     assert len(r.chunks[0]["text"]) == 32
     assert r.error is None  # truncation is not an error
+
+
+def test_pipeline_post_detection_passthrough(http_server, monkeypatch):
+    base, handler = http_server
+    body = b'{"post": "detect"}'
+    handler.response_body = body
+    handler.response_ct = "application/json"
+    handler.response_status = 200
+
+    # Simulate Playwright: return a FetchResult with content_type set but
+    # a garbled HTML body (as Chromium's JSON viewer would produce).
+    from trawl import pipeline as pipeline_mod
+    from trawl.fetchers.playwright import FetchResult as PwFetchResult
+
+    def fake_fetch_html(url: str):
+        fr = PwFetchResult(
+            url=url,
+            html="<html><pre>{&quot;post&quot;: &quot;detect&quot;}</pre></html>",
+            markdown="",
+            raw_html="",
+            fetcher="playwright",
+            elapsed_ms=5,
+            content_type="application/json; charset=utf-8",
+        )
+        return fr, "garbage-markdown", "playwright+trafilatura"
+
+    monkeypatch.setattr(pipeline_mod, "_fetch_html", fake_fetch_html)
+
+    # URL has no passthrough suffix (no .json/.xml/.rss/.atom), so
+    # fetch_relevant proceeds past the URL-hint short-circuit and
+    # enters _run_full_pipeline, which calls _fetch_html (monkeypatched).
+    r = fetch_relevant(f"{base}/api/weather", query="anything")
+    assert r.error is None, r.error
+    assert r.path == "raw_passthrough"
+    assert r.fetcher_used == "playwright+passthrough"
+    assert r.chunks[0]["text"] == body.decode("utf-8")
+    assert r.content_type == "application/json; charset=utf-8"
+
+
+def test_pipeline_post_detection_passthrough_fetch_fails(monkeypatch):
+    """When re-fetch fails, return terminal error rather than falling back."""
+    from trawl import pipeline as pipeline_mod
+    from trawl.fetchers import passthrough as pt_mod
+    from trawl.fetchers.playwright import FetchResult as PwFetchResult
+
+    def fake_fetch_html(url: str):
+        return (
+            PwFetchResult(
+                url=url,
+                html="<html></html>",
+                markdown="",
+                raw_html="",
+                fetcher="playwright",
+                elapsed_ms=5,
+                content_type="application/json",
+            ),
+            "",
+            "playwright+trafilatura",
+        )
+
+    def fake_raw(url, *, timeout_s=15.0):
+        return pt_mod.PassthroughResult(
+            url=url,
+            raw_bytes=b"",
+            content_type=None,
+            elapsed_ms=1,
+            error="ConnectError: boom",
+        )
+
+    monkeypatch.setattr(pipeline_mod, "_fetch_html", fake_fetch_html)
+    monkeypatch.setattr(pt_mod, "fetch_raw_body", fake_raw)
+
+    r = fetch_relevant("https://example.test/api/x", query="anything")
+    assert r.path == "raw_passthrough"
+    assert r.error and "passthrough raw body fetch failed" in r.error
+    assert r.chunks == []

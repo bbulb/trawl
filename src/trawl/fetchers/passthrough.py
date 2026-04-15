@@ -149,3 +149,71 @@ def fetch(url: str, *, timeout_s: float = 15.0) -> PassthroughResult:
             elapsed_ms=int((time.monotonic() - t0) * 1000),
             error=f"{type(e).__name__}: {e}",
         )
+
+
+def fetch_raw_body(
+    url: str,
+    *,
+    timeout_s: float = 15.0,
+) -> PassthroughResult:
+    """Re-fetch `url` via httpx to recover the original bytes.
+
+    Used after Playwright has detected a passthrough Content-Type on
+    the navigation response. Playwright's rendered HTML at that point
+    is Chromium's JSON/XML viewer DOM, not the raw body, so we issue a
+    direct httpx GET. Unlike `fetch`, this does not enforce the URL-
+    hint gate or fail on Content-Type mismatch — the caller already
+    decided the body is structured data.
+    """
+    t0 = time.monotonic()
+    try:
+        with httpx.stream(
+            "GET",
+            url,
+            follow_redirects=True,
+            timeout=timeout_s,
+        ) as resp:
+            if resp.status_code >= 400:
+                return PassthroughResult(
+                    url=url,
+                    raw_bytes=b"",
+                    content_type=resp.headers.get("content-type"),
+                    elapsed_ms=int((time.monotonic() - t0) * 1000),
+                    error=f"HTTP {resp.status_code}",
+                )
+            ct = resp.headers.get("content-type")
+            buf = bytearray()
+            truncated = False
+            for chunk in resp.iter_bytes():
+                remaining = PASSTHROUGH_MAX_BYTES - len(buf)
+                if remaining <= 0:
+                    truncated = True
+                    break
+                if len(chunk) > remaining:
+                    buf.extend(chunk[:remaining])
+                    truncated = True
+                    break
+                buf.extend(chunk)
+            if not buf and not truncated:
+                return PassthroughResult(
+                    url=url,
+                    raw_bytes=b"",
+                    content_type=ct,
+                    elapsed_ms=int((time.monotonic() - t0) * 1000),
+                    error="empty body",
+                )
+            return PassthroughResult(
+                url=url,
+                raw_bytes=bytes(buf),
+                content_type=ct,
+                elapsed_ms=int((time.monotonic() - t0) * 1000),
+                truncated=truncated,
+            )
+    except httpx.HTTPError as e:
+        return PassthroughResult(
+            url=url,
+            raw_bytes=b"",
+            content_type=None,
+            elapsed_ms=int((time.monotonic() - t0) * 1000),
+            error=f"{type(e).__name__}: {e}",
+        )
