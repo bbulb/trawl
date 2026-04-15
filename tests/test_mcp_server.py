@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -43,9 +44,15 @@ def _start_local_server() -> tuple[str, ThreadingHTTPServer]:
 
 
 async def run() -> int:
+    # Spawn with TRAWL_VLM_URL explicitly set so profile_page is advertised.
+    env_with_vlm = {
+        **os.environ,
+        "TRAWL_VLM_URL": os.environ.get("TRAWL_VLM_URL", "http://localhost:8080/v1"),
+    }
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "trawl_mcp"],
+        env=env_with_vlm,
     )
 
     print("→ starting trawl-mcp subprocess…")
@@ -54,11 +61,14 @@ async def run() -> int:
             print("→ initialising session")
             await session.initialize()
 
-            print("→ listing tools")
+            print("→ listing tools (VLM set)")
             tools_result = await session.list_tools()
             tool_names = [t.name for t in tools_result.tools]
             print(f"   tools = {tool_names}")
             assert "fetch_page" in tool_names, f"fetch_page missing from {tool_names}"
+            assert "profile_page" in tool_names, (
+                f"profile_page expected when TRAWL_VLM_URL is set: {tool_names}"
+            )
             fetch_page_tool = next(t for t in tools_result.tools if t.name == "fetch_page")
             assert fetch_page_tool.inputSchema is not None, "fetch_page has no input schema"
             print(
@@ -105,6 +115,35 @@ async def run() -> int:
             finally:
                 server.shutdown()
                 server.server_close()
+
+    # Second subprocess with TRAWL_VLM_URL stripped — profile_page must be
+    # hidden AND a direct call must return a clean error.
+    env_without_vlm = {k: v for k, v in os.environ.items() if k != "TRAWL_VLM_URL"}
+    params_no_vlm = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "trawl_mcp"],
+        env=env_without_vlm,
+    )
+    print("→ starting trawl-mcp subprocess (VLM unset)…")
+    async with stdio_client(params_no_vlm) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            tools_result = await session.list_tools()
+            tool_names = [t.name for t in tools_result.tools]
+            print(f"   tools = {tool_names}")
+            assert "fetch_page" in tool_names, f"fetch_page missing: {tool_names}"
+            assert "profile_page" not in tool_names, (
+                f"profile_page should be hidden when TRAWL_VLM_URL unset: {tool_names}"
+            )
+
+            print("→ calling profile_page directly (expect disabled error)")
+            call_result = await session.call_tool(
+                "profile_page",
+                {"url": "https://example.com/"},
+            )
+            payload = json.loads(call_result.content[0].text)
+            assert payload["ok"] is False, f"expected ok=False, got {payload}"
+            assert "profile_page disabled" in (payload.get("error") or ""), payload
 
     print("\nOK: trawl-mcp stdio server smoke test passed.")
     return 0

@@ -46,7 +46,7 @@ import os
 import httpx
 
 DEFAULT_LLAMA_URL = os.environ.get("TRAWL_HYDE_URL", "http://localhost:8082/v1")
-DEFAULT_MODEL = os.environ.get("TRAWL_HYDE_MODEL", "gemma-4-E4B-it-Q8_0.gguf")
+DEFAULT_MODEL = os.environ.get("TRAWL_HYDE_MODEL", "gemma")
 # With `enable_thinking=False` the 4B utility model answers directly, no
 # reasoning pass. 300 tokens is plenty for a 2-3 sentence hypothetical.
 HYDE_MAX_TOKENS = 300
