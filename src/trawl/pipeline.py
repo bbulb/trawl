@@ -77,6 +77,8 @@ class PipelineResult:
     suggest_profile_reason: str | None = None
     rerank_used: bool = False
     rerank_ms: int = 0
+    content_type: str | None = None
+    truncated: bool = False
 
     @property
     def output_chars(self) -> int:
