@@ -61,8 +61,9 @@ Wikipedia/passthrough 전용 fetcher 경로, full page retrieval 경로
 - `TRAWL_TELEMETRY_PATH` → 기본 `~/.cache/trawl/telemetry.jsonl`
   (다른 trawl 캐시와 동일 디렉터리).
 - `TRAWL_TELEMETRY_MAX_BYTES` → 기본 `67108864` (64 MB).
-- 디렉터리 없으면 `mkdir(parents=True, exist_ok=True)` 후
-  `chmod 0o700`. 파일 최초 생성 시 `chmod 0o600`.
+- 디렉터리 없으면 `mkdir(parents=True, exist_ok=True)`. 부모 디렉터리
+  (`~/.cache/trawl/`)는 profile/visits 캐시와 공유되므로 여기서 권한을
+  바꾸지 않는다. 파일 최초 생성 시에만 `chmod 0o600` (best-effort).
 
 ### 이벤트 스키마
 
