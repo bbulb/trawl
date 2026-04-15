@@ -193,6 +193,63 @@ def _build_passthrough_result(
     )
 
 
+def _try_passthrough(
+    url: str,
+    query: str | None,
+    t_start: float,
+) -> PipelineResult | None:
+    """Attempt to satisfy `url` via the raw-passthrough path.
+
+    Two ordered strategies:
+    1. URL suffix hint (.json/.xml/.rss/.atom) — straight httpx GET via
+       `passthrough.fetch`.
+    2. HEAD pre-probe for suffix-less URLs — if the origin answers HEAD
+       with a passthrough Content-Type, re-GET the body via
+       `passthrough.fetch_raw_body` and skip Playwright entirely.
+
+    Returns a PipelineResult when one of the strategies succeeds, else
+    None so the caller continues to the normal HTML path.
+    """
+    if passthrough.matches(url):
+        pt = passthrough.fetch(url)
+        if pt.ok:
+            return _build_passthrough_result(
+                url,
+                query,
+                body=pt.raw_bytes,
+                content_type=pt.content_type,
+                fetcher_name="passthrough",
+                t_start=t_start,
+                fetch_ms=pt.elapsed_ms,
+                truncated=pt.truncated,
+            )
+        logger.info(
+            "passthrough URL hint matched but fetch failed (%s); falling through",
+            pt.error,
+        )
+        return None
+
+    probed_ct = passthrough.probe(url)
+    if probed_ct:
+        pt = passthrough.fetch_raw_body(url)
+        if pt.ok:
+            return _build_passthrough_result(
+                url,
+                query,
+                body=pt.raw_bytes,
+                content_type=probed_ct,
+                fetcher_name="passthrough-probed",
+                t_start=t_start,
+                fetch_ms=pt.elapsed_ms,
+                truncated=pt.truncated,
+            )
+        logger.info(
+            "passthrough HEAD probe hit but body fetch failed (%s); falling through",
+            pt.error,
+        )
+    return None
+
+
 def _error_result(
     url: str,
     query: str,
@@ -598,26 +655,11 @@ def _fetch_relevant_impl(
 
     # Passthrough short-circuit: structured-data URLs (JSON, XML, RSS, Atom)
     # don't need a query — the raw bytes are the answer. Check before the
-    # query=None guard so callers can omit query for these URLs.
-    if passthrough.matches(url):
-        pt = passthrough.fetch(url)
-        if pt.ok:
-            return _build_passthrough_result(
-                url,
-                query,
-                body=pt.raw_bytes,
-                content_type=pt.content_type,
-                fetcher_name="passthrough",
-                t_start=t_start,
-                fetch_ms=pt.elapsed_ms,
-                truncated=pt.truncated,
-            )
-        # Fetch failed — fall through to the normal pipeline (which also
-        # has a passthrough check, but that path requires a query).
-        logger.info(
-            "passthrough URL hint matched but fetch failed (%s); falling through",
-            pt.error,
-        )
+    # query=None guard so callers can omit query for these URLs. Covers
+    # both URL-suffix and HEAD-probed (suffix-less) API endpoints.
+    pt_result = _try_passthrough(url, query, t_start)
+    if pt_result is not None:
+        return pt_result
 
     # Full pipeline (existing behavior + query=None guard + suggest_profile).
     if not query:
@@ -690,25 +732,10 @@ def _run_full_pipeline(
         fetched = pdf.fetch(url)
         markdown = fetched.markdown
         fetcher_name = "pdf"
-    elif passthrough.matches(url):
-        pt = passthrough.fetch(url)
-        if pt.ok:
-            return _build_passthrough_result(
-                url,
-                query,
-                body=pt.raw_bytes,
-                content_type=pt.content_type,
-                fetcher_name="passthrough",
-                t_start=t_start,
-                fetch_ms=pt.elapsed_ms,
-                truncated=pt.truncated,
-            )
-        logger.info(
-            "passthrough URL hint matched but fetch failed (%s); falling through",
-            pt.error,
-        )
-        fetched, markdown, fetcher_name = _fetch_html(url)
     else:
+        pt_result = _try_passthrough(url, query, t_start)
+        if pt_result is not None:
+            return pt_result
         fetched, markdown, fetcher_name = _fetch_html(url)
 
     # 1b. Playwright-path post-detection passthrough. When a suffix-less

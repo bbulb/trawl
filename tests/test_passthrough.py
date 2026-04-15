@@ -71,6 +71,7 @@ class _Handler(BaseHTTPRequestHandler):
     response_body: bytes = b""
     response_ct: str = "application/json"
     response_status: int = 200
+    head_status: int | None = None
 
     def log_message(self, *a, **kw):
         pass
@@ -81,6 +82,13 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(self.response_body)))
         self.end_headers()
         self.wfile.write(self.response_body)
+
+    def do_HEAD(self):
+        status = self.head_status if self.head_status is not None else self.response_status
+        self.send_response(status)
+        self.send_header("Content-Type", self.response_ct)
+        self.send_header("Content-Length", str(len(self.response_body)))
+        self.end_headers()
 
 
 @pytest.fixture
@@ -137,6 +145,39 @@ def test_fetch_truncation(http_server, monkeypatch):
     assert r.ok
     assert r.truncated is True
     assert len(r.raw_bytes) == 1024
+
+
+def test_probe_head_ok_json(http_server):
+    base, handler = http_server
+    handler.response_body = b'{"a": 1}'
+    handler.response_ct = "application/json"
+    handler.response_status = 200
+    handler.head_status = 200
+    ct = passthrough.probe(f"{base}/v1/forecast")
+    assert ct is not None
+    assert ct.startswith("application/json")
+
+
+def test_probe_head_405_returns_none(http_server):
+    base, handler = http_server
+    handler.response_body = b'{"a": 1}'
+    handler.response_ct = "application/json"
+    handler.head_status = 405
+    assert passthrough.probe(f"{base}/v1/forecast") is None
+
+
+def test_probe_head_non_passthrough_ct(http_server):
+    base, handler = http_server
+    handler.response_body = b"<html></html>"
+    handler.response_ct = "text/html"
+    handler.response_status = 200
+    handler.head_status = 200
+    assert passthrough.probe(f"{base}/page") is None
+
+
+def test_probe_network_error_returns_none():
+    # Port 1 is reserved; no listener, httpx will error quickly.
+    assert passthrough.probe("http://127.0.0.1:1/nope", timeout_s=0.5) is None
 
 
 from trawl.fetchers.playwright import FetchResult
@@ -199,12 +240,34 @@ def test_fetch_relevant_passthrough_truncated(http_server, monkeypatch):
     assert r.error is None  # truncation is not an error
 
 
+def test_fetch_relevant_head_probed_passthrough(http_server):
+    """Suffix-less API endpoint answering HEAD with a JSON Content-Type
+    should bypass Playwright and return the raw body."""
+    base, handler = http_server
+    body = b'{"temp": 21}'
+    handler.response_body = body
+    handler.response_ct = "application/json"
+    handler.response_status = 200
+    handler.head_status = 200
+
+    r = fetch_relevant(f"{base}/v1/forecast?lat=0&lon=0")
+    assert r.error is None, r.error
+    assert r.path == "raw_passthrough"
+    assert r.fetcher_used == "passthrough-probed"
+    assert r.content_type == "application/json"
+    assert r.chunks[0]["text"] == body.decode("utf-8")
+
+
 def test_pipeline_post_detection_passthrough(http_server, monkeypatch):
     base, handler = http_server
     body = b'{"post": "detect"}'
     handler.response_body = body
     handler.response_ct = "application/json"
     handler.response_status = 200
+    # This test covers the case where HEAD isn't supported, so the pre-probe
+    # must fail and the pipeline must fall through to the Playwright render
+    # before the Content-Type post-check salvages the body.
+    handler.head_status = 405
 
     # Simulate Playwright: return a FetchResult with content_type set but
     # a garbled HTML body (as Chromium's JSON viewer would produce).

@@ -1,13 +1,16 @@
 """Raw-passthrough fetcher for structured data responses.
 
 Bypasses trawl's extraction/chunking/retrieval when the target URL
-returns JSON, XML, RSS, or Atom. Detection is two-stage:
+returns JSON, XML, RSS, or Atom. Detection is three-stage:
 
 1. URL-suffix hint (this module's `matches`) — cheap, lets the pipeline
    take an httpx-only fast path without launching Playwright.
-2. Content-Type post-check (`is_passthrough_content_type`) — used by
-   the pipeline after Playwright has already loaded a suffix-less URL,
-   to discover API endpoints like `/api/weather` that still return JSON.
+2. HEAD pre-probe (`probe`) — for suffix-less URLs like
+   `api.open-meteo.com/v1/forecast`. Small HEAD request to learn the
+   Content-Type before paying for a headless browser render.
+3. Content-Type post-check (`is_passthrough_content_type`) — last-resort
+   check on the Playwright response, used when HEAD isn't supported by
+   the origin but GET succeeded and revealed structured data.
 """
 
 from __future__ import annotations
@@ -74,6 +77,27 @@ class PassthroughResult:
     @property
     def ok(self) -> bool:
         return self.error is None
+
+
+def probe(url: str, *, timeout_s: float = 3.0) -> str | None:
+    """HEAD `url` and return its Content-Type when it names a passthrough
+    media type. Returns None for every other outcome (non-passthrough
+    Content-Type, HEAD not supported, redirect chain, network error).
+
+    The caller is expected to fall through to the normal HTML fetcher
+    when None is returned. A short default timeout keeps the probe from
+    stalling page loads on unresponsive origins — failure of the probe
+    must not make trawl slower than before.
+    """
+    try:
+        with httpx.Client(timeout=timeout_s, follow_redirects=True) as client:
+            resp = client.head(url)
+    except httpx.HTTPError:
+        return None
+    if resp.status_code >= 400:
+        return None
+    ct = resp.headers.get("content-type")
+    return ct if is_passthrough_content_type(ct) else None
 
 
 def fetch(url: str, *, timeout_s: float = 15.0) -> PassthroughResult:
