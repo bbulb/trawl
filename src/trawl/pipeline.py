@@ -20,7 +20,7 @@ import time
 from dataclasses import asdict, dataclass
 from urllib.parse import urlsplit
 
-from . import chunking, extraction, hyde, reranking, retrieval
+from . import chunking, extraction, hyde, reranking, retrieval, telemetry
 from .fetchers import github, passthrough, pdf, playwright, stackexchange, wikipedia, youtube
 
 logger = logging.getLogger(__name__)
@@ -501,6 +501,30 @@ def _profile_transfer_path(
 
 
 def fetch_relevant(
+    url: str,
+    query: str | None = None,
+    *,
+    k: int | None = None,
+    use_hyde: bool = False,
+    use_rerank: bool = True,
+) -> PipelineResult:
+    """Public entry point. See _fetch_relevant_impl for logic.
+
+    Records one telemetry event per call when TRAWL_TELEMETRY=1.
+    Telemetry failures never propagate.
+    """
+    result = _fetch_relevant_impl(
+        url,
+        query,
+        k=k,
+        use_hyde=use_hyde,
+        use_rerank=use_rerank,
+    )
+    telemetry.record(result)
+    return result
+
+
+def _fetch_relevant_impl(
     url: str,
     query: str | None = None,
     *,

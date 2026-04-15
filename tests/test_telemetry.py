@@ -140,3 +140,25 @@ def test_record_swallows_io_errors(tmp_path: Path, monkeypatch, caplog):
         assert any("telemetry record failed" in r.message for r in caplog.records)
     finally:
         tmp_path.chmod(0o700)  # restore so pytest can clean up
+
+
+def test_fetch_relevant_records_telemetry(tmp_path: Path, monkeypatch):
+    """fetch_relevant() must call telemetry.record exactly once, regardless
+    of which internal return path was taken (error path is fine)."""
+    target = tmp_path / "t.jsonl"
+    monkeypatch.setenv("TRAWL_TELEMETRY", "1")
+    monkeypatch.setenv("TRAWL_TELEMETRY_PATH", str(target))
+
+    from trawl import pipeline
+
+    # query=None with no profile triggers the fast error-return path —
+    # does not require any network or embedding server.
+    result = pipeline.fetch_relevant("https://never.example.com/x", "")
+    assert result.error is not None  # sanity
+
+    assert target.exists()
+    lines = target.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    event = json.loads(lines[0])
+    assert event["url"] == "https://never.example.com/x"
+    assert event["error"] is not None
