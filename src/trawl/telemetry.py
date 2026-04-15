@@ -79,6 +79,35 @@ def record(result: "PipelineResult") -> None:
 
 
 DEFAULT_PATH = "~/.trawl/telemetry.jsonl"
+DEFAULT_MAX_BYTES = 64 * 1024 * 1024  # 64 MB
+
+
+def _max_bytes() -> int:
+    raw = os.environ.get("TRAWL_TELEMETRY_MAX_BYTES")
+    if not raw:
+        return DEFAULT_MAX_BYTES
+    try:
+        return int(raw)
+    except ValueError:
+        return DEFAULT_MAX_BYTES
+
+
+def _maybe_rotate(path: Path) -> None:
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return
+    if size < _max_bytes():
+        return
+    rotated = path.with_suffix(path.suffix + ".1")
+    try:
+        if rotated.exists():
+            rotated.unlink()
+        path.rename(rotated)
+    except OSError:
+        # Another process may have rotated concurrently. Next append
+        # will land in whichever file is current.
+        pass
 
 
 def _target_path() -> Path:
@@ -93,6 +122,7 @@ def _write_event(result: "PipelineResult") -> None:
         os.chmod(path.parent, 0o700)
     except OSError:
         pass
+    _maybe_rotate(path)
     event = _build_event(result)
     line = json.dumps(event, ensure_ascii=False) + "\n"
     newly_created = not path.exists()

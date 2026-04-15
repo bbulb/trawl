@@ -94,3 +94,31 @@ def test_record_creates_directory(tmp_path: Path, monkeypatch):
 
     assert target.exists()
     assert target.parent.is_dir()
+
+
+def test_rotation_when_exceeds_max_bytes(tmp_path: Path, monkeypatch):
+    target = tmp_path / "t.jsonl"
+    monkeypatch.setenv("TRAWL_TELEMETRY", "1")
+    monkeypatch.setenv("TRAWL_TELEMETRY_PATH", str(target))
+    # One event is ~500 bytes; 300 bytes forces rotation after the first write.
+    monkeypatch.setenv("TRAWL_TELEMETRY_MAX_BYTES", "300")
+
+    telemetry.record(_sample_result(query="first"))
+    telemetry.record(_sample_result(query="second"))
+    telemetry.record(_sample_result(query="third"))
+
+    rotated = target.with_suffix(target.suffix + ".1")
+    assert rotated.exists(), "rotated .1 file should be created"
+    assert target.exists(), "new current file should be created"
+
+    # Current file must contain only the most recent event(s).
+    current_lines = target.read_text(encoding="utf-8").splitlines()
+    assert len(current_lines) >= 1
+    last_event = json.loads(current_lines[-1])
+    # sha1("third")[:16]
+    assert last_event["query_sha1"] == hashlib_sha1_prefix("third")
+
+
+def hashlib_sha1_prefix(s: str) -> str:
+    import hashlib as _h
+    return _h.sha1(s.encode("utf-8")).hexdigest()[:16]
