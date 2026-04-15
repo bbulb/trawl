@@ -76,6 +76,11 @@ trawl directory. Humans should read `README.md` first, then
     pin requests to a specific llama-server slot (via `id_slot`) to
     avoid evicting other consumers' KV cache on shared servers with
     prompt caching.
+  - **Raw passthrough** — JSON/XML/RSS/Atom responses are returned as-is
+    without extraction. URL suffixes (`.json`, `.xml`, `.rss`, `.atom`)
+    take an httpx fast path; suffix-less API endpoints are detected by
+    response `Content-Type`. Byte cap via `TRAWL_PASSTHROUGH_MAX_BYTES`
+    (default 256 KB).
 
 ## Quick Reference
 
@@ -225,6 +230,7 @@ change them, run `tests/test_pipeline.py` before AND after.
 | `pipeline.py retrieve_k multiplier` | `2` | Retrieves 2x candidates for reranking; fewer reduces rerank benefit, more adds latency |
 | `profiles/mapper.py DEFAULT_MAX_CANDIDATES_PER_ANCHOR` | `5` | Enough headroom to find non-noise candidates after sidebar/nav filtering |
 | `profiles/mapper.py NOISE_CLS_RE` | `nav\|sidebar\|toc\|...` | Noise region detection for anchor filtering; too broad catches content, too narrow misses sidebars |
+| `fetchers/passthrough.py` | `PASSTHROUGH_MAX_BYTES` env default `262144` | 256 KB ≈ 64K tokens; weather-like APIs fit, larger than local LLM contexts |
 
 ## In / out of scope
 
