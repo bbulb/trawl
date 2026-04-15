@@ -1,0 +1,22 @@
+{
+  "schema_version": "2.0",
+  "url": "https://example.test/article_sample",
+  "file_id": "article_sample",
+  "_internal": {
+    "page_type": {
+      "primary": "article"
+    }
+  },
+  "ground_truth": {
+    "title": "Breaking: nothing happened",
+    "main_content": "Breaking: nothing happened\nThe weather was normal today. Nothing to report.\nExperts confirm the story.",
+    "with": [
+      "weather was normal",
+      "Experts confirm"
+    ],
+    "without": [
+      "Home | About",
+      "(c) 2026"
+    ]
+  }
+}

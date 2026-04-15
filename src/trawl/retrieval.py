@@ -17,7 +17,7 @@ import httpx
 from .chunking import Chunk
 
 DEFAULT_EMBEDDING_URL = os.environ.get("TRAWL_EMBED_URL", "http://localhost:8081/v1")
-DEFAULT_EMBEDDING_MODEL = os.environ.get("TRAWL_EMBED_MODEL", "bge-m3-Q8_0.gguf")
+DEFAULT_EMBEDDING_MODEL = os.environ.get("TRAWL_EMBED_MODEL", "bge-m3")
 EMBEDDING_BATCH = 64
 # Character cap per input. llama-server is configured with `--ubatch-size 2048`
 # and Korean is roughly 1 token/char, so 1800 leaves a ~10% headroom before

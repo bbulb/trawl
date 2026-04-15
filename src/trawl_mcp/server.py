@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -45,13 +46,19 @@ PROFILE_PAGE_DESCRIPTION = (
     "path and skip embedding entirely for small-to-medium pages. Call this "
     "when fetch_page returns suggest_profile=true, or when you expect to "
     "revisit a URL multiple times. Profile generation takes ~10-20 seconds "
-    "and uses the local vision LLM (default: http://localhost:8080)."
+    "and uses the vision LLM at TRAWL_VLM_URL."
 )
+
+
+def _profile_page_enabled() -> bool:
+    """profile_page needs a vision LLM; hide the tool when TRAWL_VLM_URL is
+    unset so the MCP client's tool list reflects what actually works."""
+    return bool(os.environ.get("TRAWL_VLM_URL"))
 
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
-    return [
+    tools = [
         Tool(
             name="fetch_page",
             description=FETCH_PAGE_DESCRIPTION,
@@ -95,26 +102,30 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
-        Tool(
-            name="profile_page",
-            description=PROFILE_PAGE_DESCRIPTION,
-            inputSchema={
-                "type": "object",
-                "required": ["url"],
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "The URL to profile.",
-                    },
-                    "force_refresh": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": "Regenerate even if a cached profile exists.",
+    ]
+    if _profile_page_enabled():
+        tools.append(
+            Tool(
+                name="profile_page",
+                description=PROFILE_PAGE_DESCRIPTION,
+                inputSchema={
+                    "type": "object",
+                    "required": ["url"],
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "The URL to profile.",
+                        },
+                        "force_refresh": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "Regenerate even if a cached profile exists.",
+                        },
                     },
                 },
-            },
-        ),
-    ]
+            )
+        )
+    return tools
 
 
 def _error_response(message: str) -> list[TextContent]:
@@ -132,6 +143,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if name == "fetch_page":
         return await _call_fetch_page(arguments)
     if name == "profile_page":
+        if not _profile_page_enabled():
+            return _error_response(
+                "profile_page disabled: set TRAWL_VLM_URL to enable"
+            )
         return await _call_profile_page(arguments)
     return _error_response(f"unknown tool: {name}")
 
