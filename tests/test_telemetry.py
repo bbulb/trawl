@@ -122,3 +122,19 @@ def test_rotation_when_exceeds_max_bytes(tmp_path: Path, monkeypatch):
 def hashlib_sha1_prefix(s: str) -> str:
     import hashlib as _h
     return _h.sha1(s.encode("utf-8")).hexdigest()[:16]
+
+
+def test_record_swallows_io_errors(tmp_path: Path, monkeypatch, caplog):
+    # Point at a path whose parent cannot be created.
+    target = tmp_path / "ro" / "t.jsonl"
+    tmp_path.chmod(0o500)  # make tmp_path read+execute only
+    try:
+        monkeypatch.setenv("TRAWL_TELEMETRY", "1")
+        monkeypatch.setenv("TRAWL_TELEMETRY_PATH", str(target))
+
+        with caplog.at_level("WARNING", logger="trawl.telemetry"):
+            telemetry.record(_sample_result())  # must not raise
+
+        assert any("telemetry record failed" in r.message for r in caplog.records)
+    finally:
+        tmp_path.chmod(0o700)  # restore so pytest can clean up
