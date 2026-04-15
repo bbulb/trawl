@@ -24,7 +24,12 @@ classifiers = [
 
 dependencies = [
     "httpx>=0.27",
-    "playwright>=1.40",
+    # Pinned to match the Chromium revision baked into the Playwright base
+    # Docker image (mcr.microsoft.com/playwright/python:v1.58.0-jammy).
+    # Bump this AND the Dockerfile FROM line together — a mismatch makes pip
+    # fetch a newer Playwright whose required browser binary is absent from
+    # the image, which surfaces as hard-to-diagnose greenlet/loop errors.
+    "playwright==1.58.0",
     "playwright-stealth>=2.0",
     "trafilatura>=1.6",
     "beautifulsoup4>=4.12",
