@@ -1,8 +1,17 @@
 """Tests for raw-passthrough handling of JSON/XML responses."""
+
 from __future__ import annotations
 
-from trawl.pipeline import PipelineResult, to_dict
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import pytest
+
+from trawl import fetch_relevant
 from trawl.fetchers import passthrough
+from trawl.fetchers.playwright import FetchResult
+from trawl.pipeline import PipelineResult, to_dict
 
 
 def test_pipeline_result_has_passthrough_fields():
@@ -58,13 +67,6 @@ def test_is_passthrough_content_type():
     assert not f("image/png")
     assert not f(None)
     assert not f("")
-
-
-import json
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-import pytest
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -180,9 +182,6 @@ def test_probe_network_error_returns_none():
     assert passthrough.probe("http://127.0.0.1:1/nope", timeout_s=0.5) is None
 
 
-from trawl.fetchers.playwright import FetchResult
-
-
 def test_playwright_fetch_result_has_content_type():
     r = FetchResult(
         url="https://x/",
@@ -203,9 +202,6 @@ def test_playwright_fetch_result_has_content_type():
         content_type="application/json",
     )
     assert r2.content_type == "application/json"
-
-
-from trawl import fetch_relevant
 
 
 def test_fetch_relevant_passthrough_json(http_server):
@@ -229,6 +225,7 @@ def test_fetch_relevant_passthrough_json(http_server):
 
 def test_fetch_relevant_passthrough_truncated(http_server, monkeypatch):
     from trawl.fetchers import passthrough as pt_mod
+
     monkeypatch.setattr(pt_mod, "PASSTHROUGH_MAX_BYTES", 32)
     base, handler = http_server
     handler.response_body = b'{"k":"' + b"x" * 100 + b'"}'

@@ -8,11 +8,23 @@ def _mk(id_, ptype, trawl_f1, traf_f1, trawl_err=None, traf_err=None):
         "id": id_,
         "url": None,
         "page_type": ptype,
-        "trawl": {"f1": trawl_f1, "precision": trawl_f1, "recall": trawl_f1,
-                  "time_ms": 30, "output_len": 100, "error": trawl_err},
-        "trafilatura": {"f1": traf_f1, "precision": traf_f1, "recall": traf_f1,
-                        "time_ms": 20, "output_len": 90, "error": traf_err},
-        "with_snippets_hit":    {"trawl": 0, "trafilatura": 0, "total": 0},
+        "trawl": {
+            "f1": trawl_f1,
+            "precision": trawl_f1,
+            "recall": trawl_f1,
+            "time_ms": 30,
+            "output_len": 100,
+            "error": trawl_err,
+        },
+        "trafilatura": {
+            "f1": traf_f1,
+            "precision": traf_f1,
+            "recall": traf_f1,
+            "time_ms": 20,
+            "output_len": 90,
+            "error": traf_err,
+        },
+        "with_snippets_hit": {"trawl": 0, "trafilatura": 0, "total": 0},
         "without_snippets_hit": {"trawl": 0, "trafilatura": 0, "total": 0},
     }
 
@@ -46,14 +58,14 @@ def test_aggregate_by_type_groups():
 
 def test_aggregate_top_wins_and_losses_sorted_by_delta():
     entries = [
-        _mk("win1",  "article", 0.9, 0.5),   # +0.4
-        _mk("win2",  "article", 0.8, 0.5),   # +0.3
-        _mk("loss1", "article", 0.5, 0.9),   # -0.4
-        _mk("tie",   "article", 0.5, 0.5),   #  0.0
+        _mk("win1", "article", 0.9, 0.5),  # +0.4
+        _mk("win2", "article", 0.8, 0.5),  # +0.3
+        _mk("loss1", "article", 0.5, 0.9),  # -0.4
+        _mk("tie", "article", 0.5, 0.5),  #  0.0
     ]
     agg = aggregate(entries, top_n=2)
     assert [w["id"] for w in agg["top_wins"]] == ["win1", "win2"]
-    assert [l["id"] for l in agg["top_losses"]] == ["loss1"]
+    assert [loss["id"] for loss in agg["top_losses"]] == ["loss1"]
 
 
 def test_render_report_contains_required_sections():

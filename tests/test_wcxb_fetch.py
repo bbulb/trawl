@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from benchmarks.wcxb.fetch import download_one, verify_sha256, HashMismatch
+from benchmarks.wcxb.fetch import HashMismatch, download_one, verify_sha256
 
 
 def _sha256(p: Path) -> str:
@@ -16,7 +16,7 @@ def test_download_one_idempotent_with_matching_hash(tmp_path):
     expected = _sha256(src)
 
     dest = tmp_path / "dest.txt"
-    assert download_one(src.as_uri(), dest, expected) is True   # downloaded
+    assert download_one(src.as_uri(), dest, expected) is True  # downloaded
     assert download_one(src.as_uri(), dest, expected) is False  # skipped
 
 

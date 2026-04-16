@@ -16,7 +16,11 @@ returns JSON, XML, RSS, or Atom. Detection is three-stage:
 from __future__ import annotations
 
 import os
+import time
+from dataclasses import dataclass
 from urllib.parse import urlsplit
+
+import httpx
 
 PASSTHROUGH_CONTENT_TYPES: tuple[str, ...] = (
     "application/json",
@@ -28,9 +32,7 @@ PASSTHROUGH_CONTENT_TYPES: tuple[str, ...] = (
 
 PASSTHROUGH_URL_SUFFIXES: tuple[str, ...] = (".json", ".xml", ".rss", ".atom")
 
-PASSTHROUGH_MAX_BYTES: int = int(
-    os.environ.get("TRAWL_PASSTHROUGH_MAX_BYTES", "262144")
-)
+PASSTHROUGH_MAX_BYTES: int = int(os.environ.get("TRAWL_PASSTHROUGH_MAX_BYTES", "262144"))
 
 
 def matches(url: str) -> bool:
@@ -55,18 +57,13 @@ def is_passthrough_content_type(ct: str | None) -> bool:
     return False
 
 
-import time
-from dataclasses import dataclass
-
-import httpx
-
-
 @dataclass
 class PassthroughResult:
     """Result of a passthrough fetch. Mirrors FetchResult where it matters
     (url, error, elapsed_ms) but carries raw bytes and content_type
     instead of rendered HTML, since passthrough skips extraction entirely.
     """
+
     url: str
     raw_bytes: bytes
     content_type: str | None

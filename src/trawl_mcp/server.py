@@ -144,9 +144,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return await _call_fetch_page(arguments)
     if name == "profile_page":
         if not _profile_page_enabled():
-            return _error_response(
-                "profile_page disabled: set TRAWL_VLM_URL to enable"
-            )
+            return _error_response("profile_page disabled: set TRAWL_VLM_URL to enable")
         return await _call_profile_page(arguments)
     return _error_response(f"unknown tool: {name}")
 

@@ -32,7 +32,7 @@ def _query_sha1(query: str) -> str:
     return hashlib.sha1(query.encode("utf-8")).hexdigest()[:16]
 
 
-def _build_event(result: "PipelineResult") -> dict:
+def _build_event(result: PipelineResult) -> dict:
     return {
         "ts": _utc_now_iso(),
         "schema": SCHEMA_VERSION,
@@ -64,7 +64,7 @@ def _enabled() -> bool:
     return os.environ.get("TRAWL_TELEMETRY", "").strip() in {"1", "true", "yes"}
 
 
-def record(result: "PipelineResult") -> None:
+def record(result: PipelineResult) -> None:
     """Append a telemetry event for one fetch_relevant() call.
 
     No-op unless TRAWL_TELEMETRY=1. Failures are logged at WARNING and
@@ -115,7 +115,7 @@ def _target_path() -> Path:
     return Path(raw).expanduser()
 
 
-def _write_event(result: "PipelineResult") -> None:
+def _write_event(result: PipelineResult) -> None:
     path = _target_path()
     # Parent directory may be shared with other trawl caches
     # (profiles, visits) — don't touch its permissions.

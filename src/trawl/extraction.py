@@ -21,6 +21,7 @@ the extra content lets pricing / list pages work.
 from __future__ import annotations
 
 import re
+
 import trafilatura
 from bs4 import BeautifulSoup
 

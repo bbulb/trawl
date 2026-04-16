@@ -819,9 +819,7 @@ def _run_full_pipeline(
     rerank_ms = 0
     if use_rerank and retrieved.scored:
         t_rerank = time.monotonic()
-        final_scored = reranking.rerank(
-            query, retrieved.scored, k=chosen_k, page_title=page_title
-        )
+        final_scored = reranking.rerank(query, retrieved.scored, k=chosen_k, page_title=page_title)
         rerank_ms = int((time.monotonic() - t_rerank) * 1000)
     else:
         final_scored = retrieved.scored

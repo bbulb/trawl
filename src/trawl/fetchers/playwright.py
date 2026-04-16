@@ -167,13 +167,9 @@ def _open_context(
         goto_timeout_ms = int(timeout_s * 1000)
         response = None
         try:
-            response = page.goto(
-                url, wait_until="networkidle", timeout=goto_timeout_ms // 2
-            )
+            response = page.goto(url, wait_until="networkidle", timeout=goto_timeout_ms // 2)
         except PlaywrightTimeoutError:
-            response = page.goto(
-                url, wait_until="domcontentloaded", timeout=goto_timeout_ms
-            )
+            response = page.goto(url, wait_until="domcontentloaded", timeout=goto_timeout_ms)
         if wait_for_ms > 0:
             page.wait_for_timeout(wait_for_ms)
         html = page.content()

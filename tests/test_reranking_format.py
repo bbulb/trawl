@@ -6,8 +6,8 @@ helper `_build_documents(scored, page_title, include_title)`.
 """
 
 from trawl.chunking import Chunk
-from trawl.retrieval import ScoredChunk
 from trawl.reranking import _build_documents
+from trawl.retrieval import ScoredChunk
 
 
 def _sc(text, heading_path=None):
