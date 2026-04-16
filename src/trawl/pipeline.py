@@ -20,7 +20,7 @@ import time
 from dataclasses import asdict, dataclass
 from urllib.parse import urlsplit
 
-from . import chunking, extraction, hyde, reranking, retrieval
+from . import chunking, extraction, hyde, reranking, retrieval, telemetry
 from .fetchers import github, passthrough, pdf, playwright, stackexchange, wikipedia, youtube
 
 logger = logging.getLogger(__name__)
@@ -79,6 +79,7 @@ class PipelineResult:
     rerank_ms: int = 0
     content_type: str | None = None
     truncated: bool = False
+    page_title: str = ""
 
     @property
     def output_chars(self) -> int:
@@ -192,6 +193,63 @@ def _build_passthrough_result(
     )
 
 
+def _try_passthrough(
+    url: str,
+    query: str | None,
+    t_start: float,
+) -> PipelineResult | None:
+    """Attempt to satisfy `url` via the raw-passthrough path.
+
+    Two ordered strategies:
+    1. URL suffix hint (.json/.xml/.rss/.atom) — straight httpx GET via
+       `passthrough.fetch`.
+    2. HEAD pre-probe for suffix-less URLs — if the origin answers HEAD
+       with a passthrough Content-Type, re-GET the body via
+       `passthrough.fetch_raw_body` and skip Playwright entirely.
+
+    Returns a PipelineResult when one of the strategies succeeds, else
+    None so the caller continues to the normal HTML path.
+    """
+    if passthrough.matches(url):
+        pt = passthrough.fetch(url)
+        if pt.ok:
+            return _build_passthrough_result(
+                url,
+                query,
+                body=pt.raw_bytes,
+                content_type=pt.content_type,
+                fetcher_name="passthrough",
+                t_start=t_start,
+                fetch_ms=pt.elapsed_ms,
+                truncated=pt.truncated,
+            )
+        logger.info(
+            "passthrough URL hint matched but fetch failed (%s); falling through",
+            pt.error,
+        )
+        return None
+
+    probed_ct = passthrough.probe(url)
+    if probed_ct:
+        pt = passthrough.fetch_raw_body(url)
+        if pt.ok:
+            return _build_passthrough_result(
+                url,
+                query,
+                body=pt.raw_bytes,
+                content_type=probed_ct,
+                fetcher_name="passthrough-probed",
+                t_start=t_start,
+                fetch_ms=pt.elapsed_ms,
+                truncated=pt.truncated,
+            )
+        logger.info(
+            "passthrough HEAD probe hit but body fetch failed (%s); falling through",
+            pt.error,
+        )
+    return None
+
+
 def _error_result(
     url: str,
     query: str,
@@ -256,6 +314,10 @@ def _build_profile_result(
     chunks = chunking.chunk_markdown(md)
     chunk_ms = int((time.monotonic() - t_chunk) * 1000)
 
+    # Profile path operates on a subtree; the full-page <title> isn't
+    # available here, so fall back to markdown H1 only.
+    page_title = extraction.extract_title(html="", markdown=md)
+
     # Fields shared by every return from this function.
     base_kwargs = {
         "url": url,
@@ -270,6 +332,7 @@ def _build_profile_result(
         "hyde_text": "",
         "profile_used": True,
         "profile_hash": profile.url_hash,
+        "page_title": page_title,
     }
 
     rerank_ms = 0
@@ -295,7 +358,9 @@ def _build_profile_result(
             )
         if use_rerank and retrieved.scored:
             t_rr = time.monotonic()
-            final_scored = reranking.rerank(query, retrieved.scored, k=chosen_k)
+            final_scored = reranking.rerank(
+                query, retrieved.scored, k=chosen_k, page_title=page_title
+            )
             rerank_ms = int((time.monotonic() - t_rr) * 1000)
         else:
             final_scored = retrieved.scored
@@ -500,6 +565,30 @@ def fetch_relevant(
     use_hyde: bool = False,
     use_rerank: bool = True,
 ) -> PipelineResult:
+    """Public entry point. See _fetch_relevant_impl for logic.
+
+    Records one telemetry event per call when TRAWL_TELEMETRY=1.
+    Telemetry failures never propagate.
+    """
+    result = _fetch_relevant_impl(
+        url,
+        query,
+        k=k,
+        use_hyde=use_hyde,
+        use_rerank=use_rerank,
+    )
+    telemetry.record(result)
+    return result
+
+
+def _fetch_relevant_impl(
+    url: str,
+    query: str | None = None,
+    *,
+    k: int | None = None,
+    use_hyde: bool = False,
+    use_rerank: bool = True,
+) -> PipelineResult:
     """Fetch `url`, return the main content.
 
     - If a cached profile exists for `url`, the profile fast path is
@@ -566,26 +655,11 @@ def fetch_relevant(
 
     # Passthrough short-circuit: structured-data URLs (JSON, XML, RSS, Atom)
     # don't need a query — the raw bytes are the answer. Check before the
-    # query=None guard so callers can omit query for these URLs.
-    if passthrough.matches(url):
-        pt = passthrough.fetch(url)
-        if pt.ok:
-            return _build_passthrough_result(
-                url,
-                query,
-                body=pt.raw_bytes,
-                content_type=pt.content_type,
-                fetcher_name="passthrough",
-                t_start=t_start,
-                fetch_ms=pt.elapsed_ms,
-                truncated=pt.truncated,
-            )
-        # Fetch failed — fall through to the normal pipeline (which also
-        # has a passthrough check, but that path requires a query).
-        logger.info(
-            "passthrough URL hint matched but fetch failed (%s); falling through",
-            pt.error,
-        )
+    # query=None guard so callers can omit query for these URLs. Covers
+    # both URL-suffix and HEAD-probed (suffix-less) API endpoints.
+    pt_result = _try_passthrough(url, query, t_start)
+    if pt_result is not None:
+        return pt_result
 
     # Full pipeline (existing behavior + query=None guard + suggest_profile).
     if not query:
@@ -658,25 +732,10 @@ def _run_full_pipeline(
         fetched = pdf.fetch(url)
         markdown = fetched.markdown
         fetcher_name = "pdf"
-    elif passthrough.matches(url):
-        pt = passthrough.fetch(url)
-        if pt.ok:
-            return _build_passthrough_result(
-                url,
-                query,
-                body=pt.raw_bytes,
-                content_type=pt.content_type,
-                fetcher_name="passthrough",
-                t_start=t_start,
-                fetch_ms=pt.elapsed_ms,
-                truncated=pt.truncated,
-            )
-        logger.info(
-            "passthrough URL hint matched but fetch failed (%s); falling through",
-            pt.error,
-        )
-        fetched, markdown, fetcher_name = _fetch_html(url)
     else:
+        pt_result = _try_passthrough(url, query, t_start)
+        if pt_result is not None:
+            return pt_result
         fetched, markdown, fetcher_name = _fetch_html(url)
 
     # 1b. Playwright-path post-detection passthrough. When a suffix-less
@@ -724,6 +783,11 @@ def _run_full_pipeline(
     chunks = chunking.chunk_markdown(markdown)
     chunk_ms = int((time.monotonic() - t_chunk) * 1000)
 
+    page_title = extraction.extract_title(
+        html=getattr(fetched, "html", "") or "",
+        markdown=markdown,
+    )
+
     # 3. Optional HyDE
     extras: list[str] = []
     hyde_text = ""
@@ -755,7 +819,7 @@ def _run_full_pipeline(
     rerank_ms = 0
     if use_rerank and retrieved.scored:
         t_rerank = time.monotonic()
-        final_scored = reranking.rerank(query, retrieved.scored, k=chosen_k)
+        final_scored = reranking.rerank(query, retrieved.scored, k=chosen_k, page_title=page_title)
         rerank_ms = int((time.monotonic() - t_rerank) * 1000)
     else:
         final_scored = retrieved.scored
@@ -777,6 +841,7 @@ def _run_full_pipeline(
         path="full_page_retrieval",
         rerank_used=use_rerank,
         rerank_ms=rerank_ms,
+        page_title=page_title,
     )
 
 

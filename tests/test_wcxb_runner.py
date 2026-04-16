@@ -1,8 +1,13 @@
 """Unit tests for the WCXB runner's single-page evaluation path."""
 
+import json as _json
 from pathlib import Path
 
-from benchmarks.wcxb.run import evaluate_page
+from benchmarks.wcxb.run import (
+    evaluate_page,
+    evaluate_page_with_baseline,
+    run_all,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "wcxb"
 
@@ -37,11 +42,9 @@ def test_evaluate_page_empty_body_f1_is_zero_no_error():
 
 def test_evaluate_page_missing_files_raises():
     import pytest
+
     with pytest.raises(FileNotFoundError):
         evaluate_page(FIXTURES, "does_not_exist")
-
-
-from benchmarks.wcxb.run import evaluate_page_with_baseline
 
 
 def test_evaluate_page_with_baseline_has_both_extractors():
@@ -67,10 +70,6 @@ def test_evaluate_page_with_baseline_snippet_counts_present():
     assert 0 <= w["trafilatura"] <= w["total"]
     assert 0 <= wo["trawl"] <= wo["total"]
     assert 0 <= wo["trafilatura"] <= wo["total"]
-
-
-import json as _json
-from benchmarks.wcxb.run import run_all
 
 
 def test_run_all_writes_raw_and_report(tmp_path):
@@ -106,7 +105,9 @@ def test_run_all_respects_limit(tmp_path):
 def test_run_all_type_filter(tmp_path):
     out_dir = tmp_path / "out"
     out_dir.mkdir()
-    run_all(data_dir=FIXTURES, out_dir=out_dir, limit=None, type_filter="product", no_baseline=False)
+    run_all(
+        data_dir=FIXTURES, out_dir=out_dir, limit=None, type_filter="product", no_baseline=False
+    )
     raw = _json.loads((out_dir / "raw.json").read_text())
     assert {e["id"] for e in raw} == {"product_sample"}
 

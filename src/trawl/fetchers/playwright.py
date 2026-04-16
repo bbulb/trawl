@@ -91,15 +91,30 @@ class _BrowserHolder:
     def ensure(self) -> Browser:
         if self._browser is not None:
             return self._browser
-        self._pw = Stealth().use_sync(sync_playwright()).__enter__()
-        self._browser = self._pw.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-            ],
-        )
+        pw = Stealth().use_sync(sync_playwright()).__enter__()
+        try:
+            browser = pw.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                ],
+            )
+        except Exception:
+            # launch() failing (missing browser binary, libs, sandbox flags)
+            # leaves the Playwright context half-initialised. Stop it here
+            # so the next ensure() call starts clean; otherwise the leftover
+            # greenlet dispatcher and event loop poison the worker thread,
+            # causing every subsequent sync_playwright() call to mis-report
+            # "Sync API inside asyncio loop" instead of the real error.
+            try:
+                pw.stop()
+            except Exception:
+                pass
+            raise
+        self._pw = pw
+        self._browser = browser
         atexit.register(self.teardown)
         return self._browser
 
@@ -152,13 +167,9 @@ def _open_context(
         goto_timeout_ms = int(timeout_s * 1000)
         response = None
         try:
-            response = page.goto(
-                url, wait_until="networkidle", timeout=goto_timeout_ms // 2
-            )
+            response = page.goto(url, wait_until="networkidle", timeout=goto_timeout_ms // 2)
         except PlaywrightTimeoutError:
-            response = page.goto(
-                url, wait_until="domcontentloaded", timeout=goto_timeout_ms
-            )
+            response = page.goto(url, wait_until="domcontentloaded", timeout=goto_timeout_ms)
         if wait_for_ms > 0:
             page.wait_for_timeout(wait_for_ms)
         html = page.content()

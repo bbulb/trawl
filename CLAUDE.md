@@ -81,6 +81,11 @@ trawl directory. Humans should read `README.md` first, then
     take an httpx fast path; suffix-less API endpoints are detected by
     response `Content-Type`. Byte cap via `TRAWL_PASSTHROUGH_MAX_BYTES`
     (default 256 KB).
+  - **Telemetry** (opt-in) — `TRAWL_TELEMETRY=1` appends one JSON line
+    per `fetch_relevant()` call to `~/.cache/trawl/telemetry.jsonl`
+    (override via `TRAWL_TELEMETRY_PATH`). Single-generation rotation
+    at 64 MB. Purpose: feed the C4 decision in `notes/RESEARCH.md`.
+    Schema: `src/trawl/telemetry.py` + the C4 spec doc.
 
 ## Quick Reference
 

@@ -20,6 +20,8 @@ the extra content lets pricing / list pages work.
 
 from __future__ import annotations
 
+import re
+
 import trafilatura
 from bs4 import BeautifulSoup
 
@@ -93,3 +95,35 @@ def _bs_fallback(html: str) -> str:
     # preserving block boundaries. Good enough for chunking; the noise
     # filter in chunking.py drops any chunks that are mostly whitespace.
     return body.get_text(separator="\n", strip=True)
+
+
+_MD_H1_RE = re.compile(r"^# +(.+?)\s*$", re.MULTILINE)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def extract_title(*, html: str, markdown: str) -> str:
+    """Return a best-effort page title.
+
+    Resolution order:
+      1. HTML <title> tag content, whitespace-stripped.
+      2. First markdown H1 line (`# ...`), whitespace-stripped.
+      3. Empty string.
+
+    Never raises. Callers should treat "" as "no title available".
+    """
+    if html:
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            if soup.title:
+                text = _HTML_TAG_RE.sub("", soup.title.get_text(strip=True)).strip()
+                if text:
+                    return text
+        except Exception:
+            pass
+
+    if markdown:
+        m = _MD_H1_RE.search(markdown)
+        if m:
+            return m.group(1).strip()
+
+    return ""

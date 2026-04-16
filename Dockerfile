@@ -1,6 +1,9 @@
 # trawl MCP server — HTTP transport, for HTTP-only MCP clients.
 # Base image ships chromium + runtime libs pre-installed for Playwright.
-FROM mcr.microsoft.com/playwright/python:v1.47.0-jammy
+# The tag version MUST match the `playwright==` pin in pyproject.toml —
+# the base image's /ms-playwright/ browsers only work with the matching
+# Python package revision. Bump both together.
+FROM mcr.microsoft.com/playwright/python:v1.58.0-jammy
 
 WORKDIR /app
 
