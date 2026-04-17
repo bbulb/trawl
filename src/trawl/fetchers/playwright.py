@@ -242,11 +242,15 @@ def fetch(
     wait_for_ms: int = 5000,
     timeout_s: float = 30.0,
     user_agent: str | None = None,
+    profile_selector: str | None = None,
 ) -> FetchResult:
     """Fetch a URL's rendered HTML using headless Chromium.
 
-    `wait_for_ms` is added after `networkidle` to let lazy SPAs finish
-    their second wave of XHRs. `timeout_s` is the hard page-load ceiling.
+    `wait_for_ms` is the ceiling for the post-navigation content-ready
+    wait; fast pages exit well before it. `timeout_s` is the hard
+    page-load ceiling. `profile_selector` — when provided — is used by
+    the content-ready detector to verify the main content region holds
+    non-placeholder text.
     """
     t0 = time.monotonic()
     with _lock:
@@ -256,6 +260,7 @@ def fetch(
                 wait_for_ms=wait_for_ms,
                 timeout_s=timeout_s,
                 user_agent=user_agent,
+                profile_selector=profile_selector,
             ) as (_ctx, _page, html, content_type):
                 return FetchResult(
                     url=url,
@@ -295,6 +300,7 @@ def render_session(
     wait_for_ms: int = 5000,
     timeout_s: float = 30.0,
     user_agent: str | None = None,
+    profile_selector: str | None = None,
 ) -> Iterator[RenderResult]:
     """Open `url`, yield a live RenderResult (with Page handle). The Page
     is only valid inside the `with` block. On exit the BrowserContext is
@@ -303,6 +309,10 @@ def render_session(
     Callers use this when they need to run live Playwright operations
     (query_selector_all, page.evaluate, screenshot) that `fetch()` cannot
     support because it closes the context before returning.
+
+    `profile_selector` — when provided — lets the content-ready wait
+    verify the main content region has non-placeholder text before the
+    session yields.
     """
     t0 = time.monotonic()
     with _lock:
@@ -311,6 +321,7 @@ def render_session(
             wait_for_ms=wait_for_ms,
             timeout_s=timeout_s,
             user_agent=user_agent,
+            profile_selector=profile_selector,
         ) as (_ctx, page, html, _content_type):
             yield RenderResult(
                 url=url,
