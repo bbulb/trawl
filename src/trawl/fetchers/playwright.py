@@ -137,6 +137,47 @@ _browser_holder = _BrowserHolder()
 _lock = threading.Lock()
 
 
+def _wait_for_content_ready(
+    page: Page, *, profile_selector: str | None, max_wait_ms: int
+) -> None:
+    """Block until the page's visible text is stable and — when a
+    profile selector is provided — that selector's content is no
+    longer a placeholder. On timeout, swallow the error and return so
+    the caller reads whatever HTML is present. Worst-case behavior
+    matches the old fixed `wait_for_timeout`.
+
+    Polls inside the browser via `page.wait_for_function` to avoid
+    Python↔JS round trips on every tick.
+    """
+    predicate = """(sel) => {
+        const s = window.__trawl_ready ??= { lastLen: 0, stableTicks: 0 };
+        const len = document.body.innerText.length;
+        const textStable = len === s.lastLen && len > 100;
+        s.lastLen = len;
+        s.stableTicks = textStable ? s.stableTicks + 1 : 0;
+
+        let selOk = true;
+        if (sel) {
+            const el = document.querySelector(sel);
+            if (!el) return false;
+            const t = el.innerText.trim();
+            const placeholder = /^(—+|---+|\\.{3,}|loading)$/i;
+            if (t.length < 50 || placeholder.test(t)) selOk = false;
+        }
+
+        return s.stableTicks >= 4 && selOk;
+    }"""
+    try:
+        page.wait_for_function(
+            predicate,
+            arg=profile_selector,
+            timeout=max_wait_ms,
+            polling=150,
+        )
+    except PlaywrightTimeoutError:
+        pass
+
+
 @contextmanager
 def _open_context(
     url: str,
@@ -144,6 +185,7 @@ def _open_context(
     wait_for_ms: int,
     timeout_s: float,
     user_agent: str | None,
+    profile_selector: str | None = None,
 ) -> Iterator[tuple[BrowserContext, Page, str, str | None]]:
     """Internal helper: open a stealth BrowserContext, navigate to `url`,
     yield (context, page, html, content_type). The context is closed in this
@@ -152,6 +194,11 @@ def _open_context(
     Uses `networkidle` with half the total timeout, falling back to
     `domcontentloaded` on PlaywrightTimeoutError so Cloudflare-protected
     long-polling sites still complete navigation.
+
+    After navigation, `_wait_for_content_ready` watches for text-content
+    stability (and `profile_selector` population when provided) with
+    `wait_for_ms` as a hard ceiling. This replaces the old fixed
+    `wait_for_timeout(wait_for_ms)` so fast pages return sub-second.
     """
     browser = _browser_holder.ensure()
     context = browser.new_context(
@@ -171,7 +218,9 @@ def _open_context(
         except PlaywrightTimeoutError:
             response = page.goto(url, wait_until="domcontentloaded", timeout=goto_timeout_ms)
         if wait_for_ms > 0:
-            page.wait_for_timeout(wait_for_ms)
+            _wait_for_content_ready(
+                page, profile_selector=profile_selector, max_wait_ms=wait_for_ms
+            )
         html = page.content()
         content_type = None
         if response is not None:
@@ -193,11 +242,15 @@ def fetch(
     wait_for_ms: int = 5000,
     timeout_s: float = 30.0,
     user_agent: str | None = None,
+    profile_selector: str | None = None,
 ) -> FetchResult:
     """Fetch a URL's rendered HTML using headless Chromium.
 
-    `wait_for_ms` is added after `networkidle` to let lazy SPAs finish
-    their second wave of XHRs. `timeout_s` is the hard page-load ceiling.
+    `wait_for_ms` is the ceiling for the post-navigation content-ready
+    wait; fast pages exit well before it. `timeout_s` is the hard
+    page-load ceiling. `profile_selector` — when provided — is used by
+    the content-ready detector to verify the main content region holds
+    non-placeholder text.
     """
     t0 = time.monotonic()
     with _lock:
@@ -207,6 +260,7 @@ def fetch(
                 wait_for_ms=wait_for_ms,
                 timeout_s=timeout_s,
                 user_agent=user_agent,
+                profile_selector=profile_selector,
             ) as (_ctx, _page, html, content_type):
                 return FetchResult(
                     url=url,
@@ -246,6 +300,7 @@ def render_session(
     wait_for_ms: int = 5000,
     timeout_s: float = 30.0,
     user_agent: str | None = None,
+    profile_selector: str | None = None,
 ) -> Iterator[RenderResult]:
     """Open `url`, yield a live RenderResult (with Page handle). The Page
     is only valid inside the `with` block. On exit the BrowserContext is
@@ -254,6 +309,10 @@ def render_session(
     Callers use this when they need to run live Playwright operations
     (query_selector_all, page.evaluate, screenshot) that `fetch()` cannot
     support because it closes the context before returning.
+
+    `profile_selector` — when provided — lets the content-ready wait
+    verify the main content region has non-placeholder text before the
+    session yields.
     """
     t0 = time.monotonic()
     with _lock:
@@ -262,6 +321,7 @@ def render_session(
             wait_for_ms=wait_for_ms,
             timeout_s=timeout_s,
             user_agent=user_agent,
+            profile_selector=profile_selector,
         ) as (_ctx, page, html, _content_type):
             yield RenderResult(
                 url=url,

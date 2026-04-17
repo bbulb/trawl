@@ -224,7 +224,8 @@ change them, run `tests/test_pipeline.py` before AND after.
 | `chunking.MIN_PLAIN_CHARS` | `20` | Smaller → keeps noise; larger → drops useful short chunks |
 | `retrieval.EMBEDDING_BATCH` | `64` | Requires llama-server `--ubatch-size ≥ 2048` |
 | `retrieval.MAX_EMBED_INPUT_CHARS` | `1800` | Safety net for the same ubatch ceiling |
-| `fetchers/playwright.py wait_for_ms` | `5000` | Naver Sports SPA needs this much |
+| `fetchers/playwright.py wait_for_ms` | `5000` | Ceiling (not fixed wait) for the content-ready detector. Fast pages exit sub-2s; SPAs that never stabilize fall back to this ceiling. Change requires re-running the parity matrix. |
+| `fetchers/playwright.py` content-ready predicate | `stableTicks >= 4`, `polling=150ms`, `len > 100`, placeholder regex | Empirically tuned on the 12-case parity matrix for a 67% avg fetch_ms reduction. Tightening the window or raising `len` can regress fast/short pages. |
 | `extraction.py` three-way max (precise, recall, bs) | order matters | Pricing pages need BS; articles need precise |
 | `hyde.py DEFAULT_LLAMA_URL` | `:8082` | Utility LLM, not main LLM — slot contention risk on :8080 |
 | `hyde.py chat_template_kwargs.enable_thinking` | `False` | Without it Gemma 4 burns all tokens on reasoning and returns empty content |

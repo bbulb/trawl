@@ -395,7 +395,10 @@ def _profile_fast_path(
     matches) so the caller should fall back to the full pipeline.
     """
     t_fetch = time.monotonic()
-    with playwright.render_session(url) as r:
+    with playwright.render_session(
+        url,
+        profile_selector=profile.mapper.main_selector,
+    ) as r:
         # A profile with zero verification anchors is untrustworthy: we
         # would vacuously accept the first selector match (all([]) is
         # True) and silently return wrong content on a drifted page.
