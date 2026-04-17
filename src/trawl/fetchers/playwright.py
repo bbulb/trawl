@@ -136,6 +136,12 @@ class _BrowserHolder:
 _browser_holder = _BrowserHolder()
 _lock = threading.Lock()
 
+# Short cap on the initial `networkidle` wait. Discourse/chat-like SPAs
+# keep websockets open so networkidle never fires; falling back to
+# `domcontentloaded` + the content-ready detector yields the same HTML
+# much faster. Empirically tuned on telemetry (see commit body).
+NETWORKIDLE_BUDGET_MS = 3000
+
 
 def _wait_for_content_ready(
     page: Page, *, profile_selector: str | None, max_wait_ms: int
@@ -191,9 +197,11 @@ def _open_context(
     yield (context, page, html, content_type). The context is closed in this
     generator's finally block when the caller exits the `with` block.
 
-    Uses `networkidle` with half the total timeout, falling back to
-    `domcontentloaded` on PlaywrightTimeoutError so Cloudflare-protected
-    long-polling sites still complete navigation.
+    Tries `networkidle` with a short `NETWORKIDLE_BUDGET_MS` cap so
+    SPAs that hold long-polling connections (Discourse, chat UIs)
+    don't burn the full timeout budget; falls back to
+    `domcontentloaded` on PlaywrightTimeoutError. The content-ready
+    detector (below) takes over from there.
 
     After navigation, `_wait_for_content_ready` watches for text-content
     stability (and `profile_selector` population when provided) with
@@ -212,9 +220,10 @@ def _open_context(
     try:
         page = context.new_page()
         goto_timeout_ms = int(timeout_s * 1000)
+        networkidle_budget_ms = min(NETWORKIDLE_BUDGET_MS, goto_timeout_ms // 2)
         response = None
         try:
-            response = page.goto(url, wait_until="networkidle", timeout=goto_timeout_ms // 2)
+            response = page.goto(url, wait_until="networkidle", timeout=networkidle_budget_ms)
         except PlaywrightTimeoutError:
             response = page.goto(url, wait_until="domcontentloaded", timeout=goto_timeout_ms)
         if wait_for_ms > 0:
