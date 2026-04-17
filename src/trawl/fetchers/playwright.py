@@ -137,6 +137,47 @@ _browser_holder = _BrowserHolder()
 _lock = threading.Lock()
 
 
+def _wait_for_content_ready(
+    page: Page, *, profile_selector: str | None, max_wait_ms: int
+) -> None:
+    """Block until the page's visible text is stable and — when a
+    profile selector is provided — that selector's content is no
+    longer a placeholder. On timeout, swallow the error and return so
+    the caller reads whatever HTML is present. Worst-case behavior
+    matches the old fixed `wait_for_timeout`.
+
+    Polls inside the browser via `page.wait_for_function` to avoid
+    Python↔JS round trips on every tick.
+    """
+    predicate = """(sel) => {
+        const s = window.__trawl_ready ??= { lastLen: 0, stableTicks: 0 };
+        const len = document.body.innerText.length;
+        const textStable = len === s.lastLen && len > 100;
+        s.lastLen = len;
+        s.stableTicks = textStable ? s.stableTicks + 1 : 0;
+
+        let selOk = true;
+        if (sel) {
+            const el = document.querySelector(sel);
+            if (!el) return false;
+            const t = el.innerText.trim();
+            const placeholder = /^(—+|---+|\\.{3,}|loading)$/i;
+            if (t.length < 50 || placeholder.test(t)) selOk = false;
+        }
+
+        return s.stableTicks >= 4 && selOk;
+    }"""
+    try:
+        page.wait_for_function(
+            predicate,
+            arg=profile_selector,
+            timeout=max_wait_ms,
+            polling=150,
+        )
+    except PlaywrightTimeoutError:
+        pass
+
+
 @contextmanager
 def _open_context(
     url: str,
