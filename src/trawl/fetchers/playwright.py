@@ -185,6 +185,7 @@ def _open_context(
     wait_for_ms: int,
     timeout_s: float,
     user_agent: str | None,
+    profile_selector: str | None = None,
 ) -> Iterator[tuple[BrowserContext, Page, str, str | None]]:
     """Internal helper: open a stealth BrowserContext, navigate to `url`,
     yield (context, page, html, content_type). The context is closed in this
@@ -193,6 +194,11 @@ def _open_context(
     Uses `networkidle` with half the total timeout, falling back to
     `domcontentloaded` on PlaywrightTimeoutError so Cloudflare-protected
     long-polling sites still complete navigation.
+
+    After navigation, `_wait_for_content_ready` watches for text-content
+    stability (and `profile_selector` population when provided) with
+    `wait_for_ms` as a hard ceiling. This replaces the old fixed
+    `wait_for_timeout(wait_for_ms)` so fast pages return sub-second.
     """
     browser = _browser_holder.ensure()
     context = browser.new_context(
@@ -212,7 +218,9 @@ def _open_context(
         except PlaywrightTimeoutError:
             response = page.goto(url, wait_until="domcontentloaded", timeout=goto_timeout_ms)
         if wait_for_ms > 0:
-            page.wait_for_timeout(wait_for_ms)
+            _wait_for_content_ready(
+                page, profile_selector=profile_selector, max_wait_ms=wait_for_ms
+            )
         html = page.content()
         content_type = None
         if response is not None:
