@@ -133,8 +133,10 @@ def main() -> None:
             }
             for c in (pd.get("chunks") or [])[:5]
         ]
-        print(f"fetcher={entry['fetcher']} n_chunks={entry['n_chunks_total']} "
-              f"page_chars={entry['page_chars']} total_ms={entry['total_ms']}")
+        print(
+            f"fetcher={entry['fetcher']} n_chunks={entry['n_chunks_total']} "
+            f"page_chars={entry['page_chars']} total_ms={entry['total_ms']}"
+        )
         results.append(entry)
 
     (out_dir / "raw.json").write_text(json.dumps(results, ensure_ascii=False, indent=2))

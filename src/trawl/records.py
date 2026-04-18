@@ -4,11 +4,11 @@ Scans rendered HTML for groups of sibling elements that share a structural
 signature (tag + sorted class list) and annotates each member with a text
 sentinel so the downstream chunker can preserve record boundaries.
 
-The sentinel is a line that starts with an invisible-separator code point
-(U+2063) followed by the marker body, so it survives Trafilatura's
-markdown conversion as a plain text node without showing up visibly in
-the final output. The chunker splits on these lines and never breaks a
-record apart across chunks (same treatment as markdown tables).
+The sentinel is an ASCII-only ``[[TRAWL-REC|{gid}|{idx}]]`` token injected
+as a text node at the start of each record (and a matching
+``[[TRAWL-RECEND|{gid}]]`` after the last record). It survives the recall,
+precision, and BS4 fallback extractors; the chunker strips sentinel lines
+from emitted chunks so they never appear in user-facing output.
 
 Heuristics are intentionally conservative:
 - Record signatures must include an explicit class (bare ``<li>`` / ``<p>``
@@ -18,6 +18,9 @@ Heuristics are intentionally conservative:
   breadcrumb / site-header / site-footer) are skipped.
 - Record text-length median must clear a floor so tab bars and
   pagination controls are ignored.
+- Pages detecting more than ``MAX_GROUPS_PER_PAGE`` independent groups
+  are treated as over-detection (sidebar widget soup) and annotation is
+  skipped entirely for the page.
 """
 
 from __future__ import annotations
@@ -253,7 +256,7 @@ def _any_member_is_tablike(members: list[Tag]) -> bool:
             return True
         if (m.get("aria-hidden") or "").lower() == "true":
             return True
-        if (m.get("hidden") is not None):
+        if m.get("hidden") is not None:
             return True
         classes = m.get("class") or []
         if classes and TAB_CLS_RE.search(" ".join(classes)):

@@ -143,9 +143,7 @@ _lock = threading.Lock()
 NETWORKIDLE_BUDGET_MS = 3000
 
 
-def _wait_for_content_ready(
-    page: Page, *, profile_selector: str | None, max_wait_ms: int
-) -> None:
+def _wait_for_content_ready(page: Page, *, profile_selector: str | None, max_wait_ms: int) -> None:
     """Block until the page's visible text is stable and — when a
     profile selector is provided — that selector's content is no
     longer a placeholder. On timeout, swallow the error and return so
