@@ -225,6 +225,7 @@ change them, run `tests/test_pipeline.py` before AND after.
 | `retrieval.EMBEDDING_BATCH` | `64` | Requires llama-server `--ubatch-size ≥ 2048` |
 | `retrieval.MAX_EMBED_INPUT_CHARS` | `1800` | Safety net for the same ubatch ceiling |
 | `fetchers/playwright.py wait_for_ms` | `5000` | Ceiling (not fixed wait) for the content-ready detector. Fast pages exit sub-2s; SPAs that never stabilize fall back to this ceiling. Change requires re-running the parity matrix. |
+| `fetchers/playwright.py NETWORKIDLE_BUDGET_MS` | `3000` | Max time to wait for `networkidle` before falling back to `domcontentloaded`. Discourse/chat SPAs hold websockets so networkidle never fires — short budget + content-ready detector gives same HTML much faster (telemetry: NVIDIA forum 17s → 4.4s). Raising it re-introduces the regression. |
 | `fetchers/playwright.py` content-ready predicate | `stableTicks >= 4`, `polling=150ms`, `len > 100`, placeholder regex | Empirically tuned on the 12-case parity matrix for a 67% avg fetch_ms reduction. Tightening the window or raising `len` can regress fast/short pages. |
 | `extraction.py` three-way max (precise, recall, bs) | order matters | Pricing pages need BS; articles need precise |
 | `hyde.py DEFAULT_LLAMA_URL` | `:8082` | Utility LLM, not main LLM — slot contention risk on :8080 |
