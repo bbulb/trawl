@@ -61,9 +61,11 @@ def html_to_markdown(html: str) -> str:
     if not html:
         return ""
 
+    records_present = False
     if _RECORDS_ENABLED:
         try:
             html, _groups = records.annotate_records(html)
+            records_present = bool(_groups)
         except Exception:
             # Annotation is a best-effort enhancement; never fail extraction.
             pass
@@ -83,6 +85,17 @@ def html_to_markdown(html: str) -> str:
     candidates = [c for c in (recall, precise, bs) if c]
     if not candidates:
         return ""
+
+    # When records were annotated, prefer a candidate that preserved the
+    # sentinels over a longer candidate that stripped them. Aladin is the
+    # canonical case: the book list sits inside a <form>, which
+    # ``_bs_fallback`` decomposes as a noise tag — the bs output is
+    # longer than the trafilatura recall output but contains none of the
+    # 50 book records.
+    if records_present:
+        sentinel_bearing = [c for c in candidates if records.SENTINEL_PREFIX in c]
+        if sentinel_bearing:
+            return max(sentinel_bearing, key=len)
     return max(candidates, key=len)
 
 
@@ -99,17 +112,23 @@ def _bs_fallback(html: str) -> str:
     Returns plain text with double-newlines between block-level elements so
     the chunker can split sensibly. Not strictly markdown, but the chunker
     and embedder don't care about markdown syntax — they care about text.
+
+    Noise-tag decomposition is skipped for any subtree that contains a
+    record sentinel. The canonical example is Aladin: the 50 book cards
+    live inside a ``<form>`` (used for wishlist add), which is normally a
+    noise tag; stripping it would delete every record we just annotated.
     """
     try:
         soup = BeautifulSoup(html, "lxml")
     except Exception:
         return ""
     for tag in soup(_NOISE_TAGS):
+        # Preserve tags that wrap annotated records. Checking the string
+        # representation is cheap because the sentinel is ASCII and rare.
+        if records.SENTINEL_PREFIX in str(tag):
+            continue
         tag.decompose()
     body = soup.body or soup
-    # `get_text("\n", strip=True)` collapses each element's text runs while
-    # preserving block boundaries. Good enough for chunking; the noise
-    # filter in chunking.py drops any chunks that are mostly whitespace.
     return body.get_text(separator="\n", strip=True)
 
 

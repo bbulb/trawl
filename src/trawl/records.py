@@ -33,17 +33,22 @@ from bs4.element import Tag
 logger = logging.getLogger(__name__)
 
 
-# Invisible separator (U+2063). Trafilatura and BS get_text preserve it;
-# visible rendering in terminals / browsers is empty. Keeps the sentinel
-# line unique without polluting displayed output.
-SENTINEL_PREFIX = "\u2063TRAWL-REC\u2063"
-SENTINEL_SUFFIX = "\u2063"
-SENTINEL_END_PREFIX = "\u2063TRAWL-RECEND\u2063"
+# ASCII-only sentinel. An earlier revision used U+2063 invisible separator
+# as the delimiter but Trafilatura strips invisible whitespace characters
+# before emitting markdown, collapsing "\u2063TRAWL-REC\u20630\u20631\u2063"
+# down to "TRAWL-REC01" and losing the group/index distinction. ASCII
+# pipes survive both the recall and precision paths as well as the BS4
+# fallback. The marker is on its own line after markdown conversion and
+# ``chunking._split_by_record_sentinels`` strips those lines before
+# emission, so the tokens never appear in user-facing chunk text.
+SENTINEL_PREFIX = "[[TRAWL-REC|"
+SENTINEL_SUFFIX = "]]"
+SENTINEL_END_PREFIX = "[[TRAWL-RECEND|"
 SENTINEL_LINE_RE = re.compile(
-    rf"^\u2063TRAWL-REC\u2063(\d+)\u2063(\d+)\u2063$",
+    r"^\[\[TRAWL-REC\|(\d+)\|(\d+)\]\]$",
 )
 SENTINEL_END_LINE_RE = re.compile(
-    rf"^\u2063TRAWL-RECEND\u2063(\d+)\u2063$",
+    r"^\[\[TRAWL-RECEND\|(\d+)\]\]$",
 )
 
 # Mirrors profiles/mapper.py NOISE_CLS_RE so record detection and the VLM
@@ -76,6 +81,11 @@ MIN_RECORD_TEXT_LEN_MEDIAN = 20
 # Ignore groups nested so deeply that they're almost certainly inside
 # some widget — empirically anchors at depth > 20 are noise.
 MAX_ANCESTOR_DEPTH = 20
+# Pages with many independent record groups are almost always over-detecting
+# (sidebar navigation with repeating region lists, footer link columns, etc).
+# Empirically, genuine "the main content is a list" pages stay at 1–3 groups;
+# 8 is a generous ceiling before we bail out.
+MAX_GROUPS_PER_PAGE = 8
 
 
 @dataclass
@@ -137,6 +147,17 @@ def annotate_records(html: str) -> tuple[str, list[RecordGroup]]:
             )
 
     if not groups:
+        return html, []
+    if len(groups) > MAX_GROUPS_PER_PAGE:
+        # Over-detection: the DOM has many independent repeating
+        # structures, which in practice means sidebar widgets / footer
+        # link columns / regional selectors — not a content list. Bail
+        # out rather than fragmenting the page into hundreds of chunks.
+        logger.info(
+            "records: %d groups exceed MAX_GROUPS_PER_PAGE=%d; skipping annotation",
+            len(groups),
+            MAX_GROUPS_PER_PAGE,
+        )
         return html, []
     logger.info(
         "records: annotated %d group(s); total records=%d",
@@ -251,7 +272,7 @@ def _inject_sentinel(el: Tag, group_id: int, index: int) -> None:
     own line after markdown conversion (BS / Trafilatura insert a newline
     between block-level boundaries).
     """
-    marker = f"\n{SENTINEL_PREFIX}{group_id}{SENTINEL_SUFFIX}{index}{SENTINEL_SUFFIX}\n"
+    marker = f"\n{SENTINEL_PREFIX}{group_id}|{index}{SENTINEL_SUFFIX}\n"
     el.insert(0, marker)
 
 

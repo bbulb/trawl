@@ -14,6 +14,7 @@ build/
 # test outputs
 tests/results/2*/
 tests/results/*.json
+tests/results/_audit_records/
 !tests/results/.gitkeep
 
 # benchmark outputs

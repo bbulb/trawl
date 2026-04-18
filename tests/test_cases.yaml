@@ -169,6 +169,41 @@ cases:
         - "Example"
       min_chunks_returned: 1
 
+  # ---------- Repeating record structures ----------
+
+  - id: wanted_jobs
+    description: "Wanted 프론트엔드 채용 목록 — <li.Card> × 20 반복 구조"
+    url: "https://www.wanted.co.kr/wdlist/518"
+    query: "프론트엔드 개발자 채용 공고"
+    ground_truth:
+      must_contain_all:
+        - "프론트엔드"
+      must_contain_any:
+        - "경력"
+        - "신입"
+      min_chunks_returned: 5
+
+  - id: hada_news
+    description: "뉴스해다 홈 — <div.topic_row> × 20 반복 카드"
+    url: "https://news.hada.io/"
+    query: "최근 IT 뉴스"
+    ground_truth:
+      must_contain_any:
+        - "points by"
+        - "댓글"
+      min_chunks_returned: 5
+
+  - id: aladin_bestsellers
+    description: "알라딘 베스트셀러 — <div.ss_book_box> × 50, <form> 래퍼 보존 필요"
+    url: "https://www.aladin.co.kr/shop/common/wbest.aspx?BranchType=1"
+    query: "알라딘 이번주 베스트셀러 도서"
+    ground_truth:
+      must_contain_pattern: '\d+,\d{3}\s*원'   # price
+      must_contain_any:
+        - "지은이"
+        - "옮긴이"
+      min_chunks_returned: 5
+
   # ---------- YouTube ----------
 
   - id: youtube_transcript
