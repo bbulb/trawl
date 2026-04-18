@@ -20,10 +20,15 @@ the extra content lets pricing / list pages work.
 
 from __future__ import annotations
 
+import os
 import re
 
 import trafilatura
 from bs4 import BeautifulSoup
+
+from . import records
+
+_RECORDS_ENABLED = os.environ.get("TRAWL_RECORDS", "1") != "0"
 
 _NOISE_TAGS = [
     "script",
@@ -48,9 +53,20 @@ def html_to_markdown(html: str) -> str:
     Runs Trafilatura in precision and recall modes and BeautifulSoup with a
     minimal boilerplate strip, and returns whichever is longest. See the
     module docstring for rationale.
+
+    When ``TRAWL_RECORDS`` is enabled (default), repeating sibling groups in
+    the rendered DOM are annotated with invisible-separator sentinels before
+    extraction so the downstream chunker can keep each record atomic.
     """
     if not html:
         return ""
+
+    if _RECORDS_ENABLED:
+        try:
+            html, _groups = records.annotate_records(html)
+        except Exception:
+            # Annotation is a best-effort enhancement; never fail extraction.
+            pass
 
     common_kwargs = dict(
         output_format="markdown",
