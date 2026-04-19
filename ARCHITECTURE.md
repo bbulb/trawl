@@ -408,14 +408,20 @@ Ordered by expected value-per-hour:
    a separate index and a way to detect when the query is
    code-shaped; probably more effort than it's worth unless we
    see measurable rank failures from real usage.
-4. **Content-Type detection** for PDFs via HEAD requests, replacing
-   the URL-suffix heuristic.
+~~4. **Content-Type detection** for PDFs via HEAD requests~~ — **Done
+   (C7, 2026-04-19).** `fetchers/pdf.probe(url)` HEAD-pre-probes
+   suffix-less URLs and short-circuits to `pdf.fetch()` when the
+   origin answers `application/pdf`. New `fetcher_used=pdf-probed`
+   value distinguishes the probed path from the suffix-hit path.
 5. **Browser pool** for concurrent fetches. Deferred until there's
    a concrete multi-user deployment that needs it.
-6. **Per-fetch caching** keyed on (url, content_hash) so repeat
-   fetches within a short window avoid the Playwright cost. Note
-   the cache-invalidation subtlety: pages with dynamic content
-   (news, schedules) should expire quickly.
+~~6. **Per-fetch caching**~~ — **Done (C8, 2026-04-20).** Successful
+   HTML/PDF fetches land in `~/.cache/trawl/fetches/<sha256>.json`
+   (300 s default TTL, 100 MB soft cap, mtime-based LRU trim). Repeat
+   visits within TTL skip Playwright + Trafilatura. Chunking /
+   embedding / retrieval still run fresh because they're
+   query-dependent. `PipelineResult.cache_hit` flags the reuse.
+   Disable with `TRAWL_FETCH_CACHE_TTL=0`.
 
 ~~7. **Reranker pass**~~ — **Done.** Cross-encoder reranking via
 bge-reranker-v2-m3 on `:8083` is implemented and on by default.
