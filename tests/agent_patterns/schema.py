@@ -56,7 +56,6 @@ ASSERTION_KEYS = {
     "suggest_profile",
     "content_type",
     "truncated",
-<<<<<<< HEAD
     # C16 enrichment payload assertions (excerpts / outbound_links /
     # page_entities / chain_hints). Keep names aligned with the
     # PipelineResult field they inspect.
@@ -64,8 +63,6 @@ ASSERTION_KEYS = {
     "outbound_links_contain_any",
     "page_entities_contain_any",
     "chain_hints_has_key",
-=======
->>>>>>> origin/develop
 }
 
 BUDGET_KEYS = {
@@ -288,7 +285,6 @@ def _check_assertion_shape(key: str, value: Any, _err) -> None:
     elif key in {"path", "fetcher_used", "content_type", "error_contains"}:
         if not isinstance(value, str):
             raise _err(f"assertion {key!r}: must be string")
-<<<<<<< HEAD
     elif key == "excerpts_min_count":
         if not isinstance(value, (int, str)):
             raise _err(
@@ -306,8 +302,6 @@ def _check_assertion_shape(key: str, value: Any, _err) -> None:
     elif key == "chain_hints_has_key":
         if not isinstance(value, str) or not value:
             raise _err(f"assertion {key!r}: must be a non-empty string")
-=======
->>>>>>> origin/develop
 
 
 def _validate_budgets(raw: Any, _err) -> dict[str, Any]:
