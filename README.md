@@ -52,7 +52,7 @@ own infrastructure. In exchange you pay a real cost elsewhere:
 
 ### External: WCXB dev (1,497 pages)
 
-Beyond the internal 12-case parity matrix, trawl's extraction stage is
+Beyond the internal 15-case parity matrix, trawl's extraction stage is
 cross-validated against the [WCXB](https://github.com/Murrough-Foley/web-content-extraction-benchmark)
 public benchmark (CC-BY-4.0, 1,497 dev pages across 7 page types).
 
@@ -98,6 +98,16 @@ benchmark locally to regenerate.
 - **Heading-aware chunker** — preserves heading context on every
   chunk and keeps tables intact. Falls back to sentence-level
   chunking for PDF-style single-blob inputs.
+- **Repeating-record chunking** — when the rendered DOM contains a
+  run of sibling elements with the same structural signature (job
+  listings, news cards, product rows), each record becomes its own
+  atomic chunk so retrieval ranks them individually instead of
+  fragmenting mid-record.
+- **Raw passthrough for JSON / XML / RSS / Atom** — URLs with those
+  suffixes (or endpoints that answer `Content-Type: application/json`
+  on a HEAD probe) are returned byte-for-byte up to
+  `TRAWL_PASSTHROUGH_MAX_BYTES` (default 256 KB). No embedding, no
+  query required.
 - **bge-m3 dense retrieval** with an OpenAI-compatible embedding
   endpoint. Adaptive top-k based on page size.
 - **Cross-encoder reranking** (bge-reranker-v2-m3) on the top 2×
@@ -117,17 +127,19 @@ benchmark locally to regenerate.
 src/trawl/                  pipeline library
   pipeline.py               fetch_relevant() entry point
   chunking.py               heading + table preserving chunker
+  records.py                repeating-sibling record detection + sentinels
   retrieval.py              bge-m3 cosine retrieval, adaptive k
   reranking.py              bge-reranker-v2-m3 cross-encoder
   extraction.py             Trafilatura + BeautifulSoup three-way
   hyde.py                   optional query expansion
+  telemetry.py              opt-in JSONL telemetry
   profiles/                 VLM-based page profiling (optional)
   fetchers/                 per-site API-first adapters
-    playwright.py, pdf.py, youtube.py, wikipedia.py,
-    github.py, stackexchange.py
+    playwright.py, pdf.py, passthrough.py, youtube.py,
+    wikipedia.py, github.py, stackexchange.py
 
-src/trawl_mcp/              stdio MCP server wrapper
-tests/                      unit tests + 12-case parity matrix
+src/trawl_mcp/              MCP server (stdio default, --http opt-in)
+tests/                      unit tests + 15-case parity matrix
 benchmarks/                 trawl vs Jina, VLM profile eval
 examples/                   MCP client config snippets
 ```

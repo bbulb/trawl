@@ -70,6 +70,14 @@ def _load_one(path: Path) -> list[Pattern]:
         p = parse_pattern(entry, shard=path.stem)
         if p.id in seen_ids:
             raise PatternValidationError(f"[{path.name}] duplicate id {p.id!r} within shard")
+                f"[{path.name}] each pattern entry must be a mapping; "
+                f"got {type(entry).__name__}"
+            )
+        p = parse_pattern(entry, shard=path.stem)
+        if p.id in seen_ids:
+            raise PatternValidationError(
+                f"[{path.name}] duplicate id {p.id!r} within shard"
+            )
         seen_ids.add(p.id)
         out.append(p)
     return out
