@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from .records import SENTINEL_END_LINE_RE, SENTINEL_LINE_RE
+
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 TABLE_LINE_RE = re.compile(r"^\s*\|.*\|\s*$")
 
@@ -29,6 +31,11 @@ class Chunk:
     char_count: int = 0
     chunk_index: int = 0
     embed_text: str = ""  # markdown-stripped version used for embedding
+    # Populated when this chunk is a single record extracted via
+    # records.annotate_records. Useful for debug / telemetry; retrieval
+    # and reranking treat the chunk like any other.
+    record_group_id: int | None = None
+    record_index: int | None = None
 
     @property
     def heading(self) -> str:
@@ -67,8 +74,11 @@ def chunk_markdown(md: str, *, max_chars: int | None = None) -> list[Chunk]:
       - larger pages: 450 — smaller chunks keep specific facts concentrated
         and the top-k more diverse on pages with many sections
 
-    Tables are never split either way. The retrieval layer's per-input
-    truncation is the final safety net.
+    Tables are never split either way. Record regions (annotated by
+    ``records.annotate_records``) are also preserved as atomic chunks —
+    one chunk per record — regardless of ``max_chars``. The retrieval
+    layer's per-input truncation is the final safety net for oversized
+    records.
     """
     if max_chars is None:
         max_chars = 900 if len(md) < 20_000 else 450
@@ -79,13 +89,12 @@ def chunk_markdown(md: str, *, max_chars: int | None = None) -> list[Chunk]:
     chunks: list[Chunk] = []
     idx = 0
     for heading_path, body in sections:
-        for piece in _split_section(body, max_chars=max_chars):
+        for piece, meta in _split_body(body, max_chars=max_chars):
             text = piece.strip()
             if not text:
                 continue
             embed = plain_text(text)
             if len(embed) < MIN_PLAIN_CHARS:
-                # Pure nav / image / link-only chunk — drop it.
                 continue
             chunks.append(
                 Chunk(
@@ -94,10 +103,83 @@ def chunk_markdown(md: str, *, max_chars: int | None = None) -> list[Chunk]:
                     char_count=len(text),
                     chunk_index=idx,
                     embed_text=embed,
+                    record_group_id=meta[0] if meta else None,
+                    record_index=meta[1] if meta else None,
                 ),
             )
             idx += 1
     return chunks
+
+
+def _split_body(
+    body: str,
+    *,
+    max_chars: int,
+) -> list[tuple[str, tuple[int, int] | None]]:
+    """Split a section body into chunks, honoring record sentinels.
+
+    Returns ``[(text, meta), ...]`` where ``meta`` is ``(group_id, index)``
+    for record chunks and ``None`` for ordinary chunks. Record regions
+    are emitted verbatim (with sentinel lines stripped); the spans
+    between records are handed to the regular character-bounded splitter.
+    """
+    out: list[tuple[str, tuple[int, int] | None]] = []
+    for span, meta in _split_by_record_sentinels(body):
+        if meta is not None:
+            out.append((span, meta))
+            continue
+        for piece in _split_section(span, max_chars=max_chars):
+            out.append((piece, None))
+    return out
+
+
+def _split_by_record_sentinels(
+    body: str,
+) -> list[tuple[str, tuple[int, int] | None]]:
+    """Partition `body` into record / non-record spans.
+
+    Walks the body line by line tracking the current record id/index.
+    When a start sentinel is seen, the accumulated non-record buffer is
+    flushed and a record buffer begins. An end sentinel or a new start
+    sentinel flushes the record buffer. Sentinel lines themselves are
+    never emitted.
+    """
+    lines = body.split("\n")
+    out: list[tuple[str, tuple[int, int] | None]] = []
+    non_record: list[str] = []
+    record: list[str] = []
+    current_meta: tuple[int, int] | None = None
+
+    def flush_non_record() -> None:
+        if non_record:
+            out.append(("\n".join(non_record), None))
+            non_record.clear()
+
+    def flush_record() -> None:
+        nonlocal current_meta
+        if current_meta is not None and record:
+            out.append(("\n".join(record).strip(), current_meta))
+        record.clear()
+        current_meta = None
+
+    for line in lines:
+        start_m = SENTINEL_LINE_RE.match(line)
+        end_m = SENTINEL_END_LINE_RE.match(line)
+        if start_m:
+            flush_non_record()
+            flush_record()
+            current_meta = (int(start_m.group(1)), int(start_m.group(2)))
+            continue
+        if end_m:
+            flush_record()
+            continue
+        if current_meta is not None:
+            record.append(line)
+        else:
+            non_record.append(line)
+    flush_record()
+    flush_non_record()
+    return out
 
 
 def _split_by_headings(md: str) -> list[tuple[list[str], str]]:

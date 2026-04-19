@@ -25,9 +25,7 @@ from mcp.types import TextContent, Tool
 
 from trawl import fetch_relevant, to_dict
 
-_pipeline_executor = ThreadPoolExecutor(
-    max_workers=1, thread_name_prefix="trawl-pipeline"
-)
+_pipeline_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="trawl-pipeline")
 
 logger = logging.getLogger("trawl_mcp")
 
