@@ -9,6 +9,17 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Added
 
+- **C7 — PDF Content-Type HEAD probe.** `fetchers/pdf.probe(url)`
+  performs a small HEAD request before launching Playwright when the
+  URL does not match the existing `.pdf` / `/pdf/` suffix heuristic.
+  When the response Content-Type is `application/pdf`, the pipeline
+  routes to `pdf.fetch()` instead of rendering the PDF viewer chrome
+  through Chromium. New `fetcher_used` value `pdf-probed` distinguishes
+  this from the suffix-hit path. Probe failure (HEAD 405, timeout,
+  network error) silently falls through to the existing HTML path —
+  C7 must never make trawl slower than before. Closes the
+  ARCHITECTURE.md "Future work #4" item. Mirrors the existing
+  `passthrough.probe` pattern.
 - **VLM profile prompt v2 and mapper noise filter.** The VLM prompt
   now instructs the model to pick mid-paragraph text instead of section
   headings (which duplicate in sidebar TOCs) and explicitly warns about

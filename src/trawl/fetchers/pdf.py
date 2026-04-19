@@ -4,6 +4,11 @@ Uses httpx for the download and PyMuPDF (`pymupdf`) for text extraction.
 PyMuPDF has the best trade-off of speed, quality, and API simplicity
 among Python PDF libraries — a single `page.get_text()` per page gives
 us reasonable reading order for most academic and technical PDFs.
+
+Also exposes `probe(url)` — a HEAD-only check used by the pipeline to
+catch suffix-less PDF URLs (download links, redirects) before paying
+for a Playwright render. Mirrors the structure of
+`fetchers/passthrough.probe()`.
 """
 
 from __future__ import annotations
@@ -15,6 +20,33 @@ import httpx
 from .playwright import FetchResult, make_error_result
 
 HTTP_TIMEOUT_S = 120.0
+PROBE_TIMEOUT_S = 3.0
+PDF_CONTENT_TYPE = "application/pdf"
+
+
+def probe(url: str, *, timeout_s: float = PROBE_TIMEOUT_S) -> bool:
+    """HEAD `url`; return True iff the Content-Type names a PDF.
+
+    Returns False on every other outcome (non-PDF type, HEAD not
+    supported, redirect chain failure, network/timeout error). Caller
+    is expected to fall through to the Playwright path on False — a
+    failed probe must never make trawl slower than the pre-C7
+    behavior.
+
+    Short default timeout keeps the probe from stalling page loads on
+    unresponsive origins. The pipeline only invokes `probe()` for
+    URLs that already missed the suffix check, so this overhead lands
+    on a minority of fetches.
+    """
+    try:
+        with httpx.Client(timeout=timeout_s, follow_redirects=True) as client:
+            resp = client.head(url, headers={"User-Agent": "trawl/0.1"})
+    except httpx.HTTPError:
+        return False
+    if resp.status_code >= 400:
+        return False
+    ct = (resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    return ct == PDF_CONTENT_TYPE
 
 
 def fetch(url: str) -> FetchResult:
