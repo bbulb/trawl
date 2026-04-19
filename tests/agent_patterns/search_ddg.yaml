@@ -1,0 +1,101 @@
+# shard: search_ddg — DuckDuckGo HTML SERP을 거쳐 도착하는 패턴.
+#
+# DDG의 lite/HTML 인터페이스(`/html/?q=...`)는 JS 없이 파싱 가능 →
+# Playwright stealth 비용 적게 든다. agent가 search 결과 첫 페이지에서
+# 링크를 식별 → 본문 fetch 패턴이 가장 흔한 chained 사용. workflows.yaml
+# 의 compositional 시나리오와 함께 사용.
+
+patterns:
+  # ============================================================
+  # DDG SERP 직접 조회 (4)
+  # ============================================================
+
+  - id: hermes_ddg_search_python_async
+    primary_agent: [hermes, claude_code]
+    category: single_fetch
+    description: "DDG HTML SERP — Python async 검색 결과"
+    url: "https://duckduckgo.com/html/?q=python+asyncio+gather+exception+handling"
+    query: "python asyncio gather exception handling"
+    live: required
+    assertions:
+      chunks_contain_any: ["asyncio", "gather", "exception"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: hermes_ddg_search_korean_news
+    primary_agent: [hermes, openclaw]
+    category: single_fetch
+    description: "DDG HTML SERP — 한국어 검색 (CJK 텍스트 SERP)"
+    url: "https://duckduckgo.com/html/?q=오늘+코스피+동향&kl=kr-kr"
+    query: "오늘 코스피 동향"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: hermes_ddg_search_arxiv_recent
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "DDG SERP — arXiv 도메인 한정 검색"
+    url: "https://duckduckgo.com/html/?q=site%3Aarxiv.org+retrieval+augmented+generation"
+    query: "site:arxiv.org retrieval augmented generation"
+    live: required
+    assertions:
+      chunks_contain_any: ["arxiv.org", "retrieval"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: hermes_ddg_search_github_repo
+    primary_agent: [hermes, claude_code]
+    category: single_fetch
+    description: "DDG SERP — GitHub 도메인 한정 검색"
+    url: "https://duckduckgo.com/html/?q=site%3Agithub.com+mcp+server+python"
+    query: "site:github.com mcp server python"
+    live: required
+    assertions:
+      chunks_contain_any: ["github.com"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  # ============================================================
+  # SearXNG 같은 self-hostable 메타검색 (1)
+  # ============================================================
+
+  - id: hermes_searx_be_search
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "SearXNG public instance — meta-search alternative"
+    url: "https://searx.be/search?q=open+source+local+llm"
+    query: "open source local LLM"
+    live: optional       # public 인스턴스가 자주 다운/rate-limit
+    assertions:
+      n_chunks_returned: ">= 1"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 18000
+
+  # ============================================================
+  # Bang redirect 시뮬레이션 (1)
+  # ============================================================
+
+  - id: hermes_ddg_bang_help
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "DDG bang reference 페이지 — agent가 bang 사용법 학습 시"
+    url: "https://duckduckgo.com/bangs"
+    query: "duckduckgo bang shortcuts list"
+    live: required
+    assertions:
+      chunks_contain_any: ["!g", "Google", "bang"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000

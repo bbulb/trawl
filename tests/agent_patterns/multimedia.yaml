@@ -1,0 +1,125 @@
+# shard: multimedia — YouTube transcript / podcast / lecture 등 멀티미디어
+# 메타데이터 + transcript 추출 시나리오. trawl이 native YouTube fetcher를
+# 보유하므로 fetcher_used 검증 포함.
+
+patterns:
+  # ============================================================
+  # YouTube — 자막 있는 안정 영상 (4)
+  # ============================================================
+
+  - id: hermes_youtube_anthropic_demo
+    primary_agent: [hermes, claude_code]
+    category: single_fetch
+    description: "YouTube — Anthropic 공식 채널 영상 (자막 있는)"
+    url: "https://www.youtube.com/watch?v=GPq9Lm6jcgQ"
+    query: "what does anthropic say in this video"
+    live: optional      # 자막 가용성이 영상별로 다름
+    assertions:
+      n_chunks_returned: ">= 1"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 12000
+
+  - id: hermes_youtube_3blue1brown_attention
+    primary_agent: [hermes, claude_code]
+    category: code_heavy_query
+    description: "3Blue1Brown — Attention in transformers"
+    url: "https://www.youtube.com/watch?v=eMlx5fFNoYc"
+    query: "attention in transformers"
+    live: required
+    assertions:
+      chunks_contain_any: ["attention", "transformer"]
+      n_chunks_returned: ">= 3"
+      fetcher_used: "youtube"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 12000
+
+  - id: hermes_youtube_kareemcarr_stats
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "YouTube — random Khan Academy stats lecture (안정 자막)"
+    url: "https://www.youtube.com/watch?v=YcYWtW-uXgE"
+    query: "what is variance in statistics"
+    live: optional
+    assertions:
+      n_chunks_returned: ">= 1"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 12000
+
+  - id: hermes_youtube_korean_lecture
+    primary_agent: [hermes, openclaw]
+    category: single_fetch
+    description: "YouTube — 한국어 자막 있는 영상 (테드 스타일)"
+    url: "https://www.youtube.com/watch?v=8VjImmH9MJ8"
+    query: "이 영상의 핵심 메시지"
+    live: optional
+    assertions:
+      n_chunks_returned: ">= 1"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 12000
+
+  # ============================================================
+  # Podcast 메타데이터 (2)
+  # ============================================================
+
+  - id: hermes_apple_podcasts_lex
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "Apple Podcasts — Lex Fridman Podcast 메인"
+    url: "https://podcasts.apple.com/us/podcast/lex-fridman-podcast/id1434243584"
+    query: "recent episodes of Lex Fridman Podcast"
+    live: required
+    assertions:
+      chunks_contain_any: ["Lex Fridman"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 18000
+
+  - id: hermes_spotify_episode_page
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "Spotify episode page — 메타데이터만 (audio는 못 가져옴)"
+    url: "https://open.spotify.com/episode/3jLGRjTC9PqXkJZ8Cw45CD"
+    query: "what is this podcast episode about"
+    live: optional
+    assertions:
+      n_chunks_returned: ">= 1"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 18000
+
+  # ============================================================
+  # Lecture / talk transcripts (2)
+  # ============================================================
+
+  - id: hermes_ted_talk_transcript
+    primary_agent: [hermes, claude_code]
+    category: single_fetch
+    description: "TED talk page — transcript link 노출"
+    url: "https://www.ted.com/talks/sir_ken_robinson_do_schools_kill_creativity"
+    query: "main argument of this talk"
+    live: required
+    assertions:
+      chunks_contain_any: ["Robinson", "creativity", "school"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 18000
+
+  - id: hermes_mit_ocw_lecture_page
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "MIT OCW — 6.034 강의 메인 페이지"
+    url: "https://ocw.mit.edu/courses/6-034-artificial-intelligence-fall-2010/"
+    query: "course syllabus and lecture topics"
+    live: required
+    assertions:
+      chunks_contain_any: ["lecture", "syllabus", "artificial intelligence"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 18000

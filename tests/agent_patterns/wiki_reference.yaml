@@ -1,0 +1,156 @@
+# shard: wiki_reference — 백과/사전/레퍼런스 사이트.
+#
+# Wikipedia (ko/en/ja/zh) + 도메인 특화 wiki (Wiktionary, Rust Reference).
+# trawl이 자체 Wikipedia API 어댑터를 갖고 있으므로 fetcher_used 검증 포함.
+
+patterns:
+  # ============================================================
+  # Wikipedia 다국어 (5)
+  # ============================================================
+
+  - id: claude_code_wiki_en_yi_sunsin
+    primary_agent: [claude_code, hermes]
+    category: single_fetch
+    description: "영어 Wikipedia — 이순신 인물 페이지"
+    url: "https://en.wikipedia.org/wiki/Yi_Sun-sin"
+    query: "what battles did Yi Sun-sin win"
+    live: required
+    assertions:
+      chunks_contain_any: ["Myeongnyang", "Hansando", "Hansan", "Imjin"]
+      n_chunks_returned: ">= 3"
+      fetcher_used: "wikipedia"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 8000
+
+  - id: openclaw_wiki_ko_yi_sunsin
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "한국어 Wikipedia — 이순신"
+    url: "https://ko.wikipedia.org/wiki/이순신"
+    query: "이순신 주요 해전과 직책"
+    live: required
+    assertions:
+      chunks_contain_any: ["한산도", "노량", "명량", "임진왜란"]
+      n_chunks_returned: ">= 3"
+      fetcher_used: "wikipedia"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 8000
+
+  - id: claude_code_wiki_en_transformer_arch
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "영어 Wikipedia — Transformer (machine learning)"
+    url: "https://en.wikipedia.org/wiki/Transformer_(deep_learning_architecture)"
+    query: "self-attention mechanism in Transformer"
+    live: required
+    assertions:
+      chunks_contain_any: ["self-attention", "attention", "encoder", "decoder"]
+      n_chunks_returned: ">= 3"
+      fetcher_used: "wikipedia"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 8000
+
+  - id: hermes_wiki_ja_sushi
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "일본어 Wikipedia — 寿司"
+    url: "https://ja.wikipedia.org/wiki/寿司"
+    query: "寿司の歴史と種類"
+    live: required
+    assertions:
+      chunks_contain_any: ["江戸", "握り", "押し"]
+      n_chunks_returned: ">= 3"
+      fetcher_used: "wikipedia"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 8000
+
+  - id: hermes_wiki_zh_python
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "중국어 Wikipedia — Python 프로그래밍 언어"
+    url: "https://zh.wikipedia.org/wiki/Python"
+    query: "Python 历史 和 设计理念"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      fetcher_used: "wikipedia"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 8000
+
+  # ============================================================
+  # 특화 wiki / 레퍼런스 (5)
+  # ============================================================
+
+  - id: claude_code_wiktionary_en_run
+    primary_agent: [claude_code]
+    category: single_fetch
+    description: "Wiktionary 영어 'run' — 다의어 처리 검증"
+    url: "https://en.wiktionary.org/wiki/run"
+    query: "definitions of the verb run"
+    live: required
+    assertions:
+      chunks_contain_any: ["verb", "definition", "etymology"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: claude_code_rust_reference_lifetimes
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "The Rust Reference — lifetimes section"
+    url: "https://doc.rust-lang.org/reference/lifetime-elision.html"
+    query: "rust lifetime elision rules"
+    live: required
+    assertions:
+      chunks_contain_any: ["lifetime", "elision", "'a"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: claude_code_cppreference_string_view
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "cppreference.com — std::string_view"
+    url: "https://en.cppreference.com/w/cpp/string/basic_string_view"
+    query: "construct a string_view from a substring"
+    live: required
+    assertions:
+      chunks_contain_any: ["string_view", "substr", "constexpr"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: hermes_wiki_namuwiki
+    primary_agent: [hermes, openclaw]
+    category: single_fetch
+    description: "나무위키 — 한국 popular wiki"
+    url: "https://namu.wiki/w/이순신"
+    query: "이순신 생애와 전적"
+    live: optional       # CF 보호 가끔 챌린지
+    assertions:
+      n_chunks_returned: ">= 1"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 22000
+
+  - id: hermes_mdn_javascript_array
+    primary_agent: [hermes, claude_code]
+    category: code_heavy_query
+    description: "MDN — Array prototype methods overview"
+    url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array"
+    query: "Array methods that mutate vs return new array"
+    live: required
+    assertions:
+      chunks_contain_any: ["push", "pop", "map", "filter"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
