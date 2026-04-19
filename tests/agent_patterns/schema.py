@@ -63,6 +63,8 @@ ASSERTION_KEYS = {
     "outbound_links_contain_any",
     "page_entities_contain_any",
     "chain_hints_has_key",
+    # C8 per-fetch cache hit — bool flag mirroring PipelineResult.cache_hit.
+    "cache_hit",
 }
 
 BUDGET_KEYS = {
@@ -267,7 +269,7 @@ def _check_assertion_shape(key: str, value: Any, _err) -> None:
             raise _err(f"assertion {key!r}: must be int or comparison string like '>= 3'")
         if isinstance(value, str):
             _parse_comparison(value, _err, key=key)
-    elif key in {"profile_used", "error_is_none", "suggest_profile", "truncated"}:
+    elif key in {"profile_used", "error_is_none", "suggest_profile", "truncated", "cache_hit"}:
         if not isinstance(value, bool):
             raise _err(f"assertion {key!r}: must be bool")
     elif key in {"path", "fetcher_used", "content_type", "error_contains"}:

@@ -259,6 +259,10 @@ def _evaluate_assertions(
             hints = measurements.get("chain_hints") or {}
             if expected not in hints:
                 fails.append(f"chain_hints_has_key: {expected!r} not in keys {sorted(hints)!r}")
+        elif key == "cache_hit":
+            actual = bool(measurements.get("cache_hit"))
+            if actual is not bool(expected):
+                fails.append(f"cache_hit: expected {expected}, got {actual}")
     return fails
 
 

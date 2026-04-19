@@ -126,6 +126,7 @@ mamba run -n trawl python tests/test_agent_patterns.py --regression
 | `outbound_links_contain_any` | list[str] — substring이 URL 또는 anchor_text에 등장 |
 | `page_entities_contain_any` | list[str] — substring이 `page_entities` 중 하나에 포함 |
 | `chain_hints_has_key` | string — `chain_hints` dict가 이 top-level key 보유 |
+| `cache_hit` | bool — C8 per-fetch cache 재사용 여부 (`PipelineResult.cache_hit`) |
 
 | Budget | 의미 |
 |---|---|
