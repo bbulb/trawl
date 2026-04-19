@@ -111,6 +111,11 @@ python tests/test_pipeline.py --only kbo_schedule --verbose
 # With HyDE enabled (adds ~15-20s, rarely useful)
 python tests/test_pipeline.py --hyde
 
+# Agent usage pattern matrix (workflow-shape regressions for openclaw/hermes/Claude Code)
+python tests/test_agent_patterns.py --dry-run                    # schema only
+python tests/test_agent_patterns.py --shard coding               # one shard
+python tests/test_agent_patterns.py --only <pattern_id> --verbose
+
 # MCP server smoke test
 python tests/test_mcp_server.py
 
@@ -183,8 +188,14 @@ src/trawl_mcp/                   MCP server wrapper (stdio default, --http opt-i
   __main__.py                    `python -m trawl_mcp [--http [HOST:PORT]]`
 
 tests/
-  test_cases.yaml                15 golden cases
+  test_cases.yaml                15 golden cases (extraction-quality parity)
   test_pipeline.py               parity runner — compares against ground truth
+  test_agent_patterns.py         agent workflow harness (single/repeat/host-transfer/compositional)
+  agent_patterns/                pattern catalog (one yaml per shard)
+    schema.py                      dataclass + YAML validator
+    loader.py                      shard loader + ID dedupe
+    coding.yaml                    coding-assistant patterns (~25)
+    README.md                      catalog rules + assertion DSL ref
   test_mcp_server.py             stdio protocol smoke test
   results/                       gitignored test outputs
 
