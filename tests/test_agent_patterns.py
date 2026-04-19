@@ -238,6 +238,7 @@ def _evaluate_assertions(
             actual = bool(measurements.get("truncated"))
             if actual is not bool(expected):
                 fails.append(f"truncated: expected {expected}, got {actual}")
+<<<<<<< HEAD
         elif key == "excerpts_min_count":
             actual = len(measurements.get("excerpts") or [])
             spec = expected if isinstance(expected, str) else f">= {int(expected)}"
@@ -268,6 +269,8 @@ def _evaluate_assertions(
                 fails.append(
                     f"chain_hints_has_key: {expected!r} not in keys {sorted(hints)!r}"
                 )
+=======
+>>>>>>> origin/develop
     return fails
 
 
