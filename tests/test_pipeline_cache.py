@@ -58,11 +58,13 @@ def fake_fetcher(monkeypatch):
 def fake_retrieval(monkeypatch):
     """Return a canned retrieval result with one scored chunk."""
 
-    def _fake_retrieve(query, chunks, *, k, extra_query_texts=None, hybrid=False):
+    def _fake_retrieve(query, chunks, *, k, **_kwargs):
         scored = [
             ScoredChunk(chunk=c, score=1.0 - i * 0.1) for i, c in enumerate(chunks[: max(k, 1)])
         ]
-        return RetrievalResult(scored=scored, elapsed_ms=5, embed_calls=0)
+        return RetrievalResult(
+            scored=scored, elapsed_ms=5, embed_calls=0, n_chunks_embedded=len(chunks)
+        )
 
     monkeypatch.setattr(pipeline.retrieval, "retrieve", _fake_retrieve)
 

@@ -9,6 +9,31 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Added
 
+- **Longform retrieval cost — chunk budget + BM25 prefilter (opt-in).**
+  New optional `chunk_budget` kwarg on
+  `src/trawl/retrieval.py::retrieve()` and matching env var
+  `TRAWL_CHUNK_BUDGET` (default `0` = disabled). When set and a page
+  produces more chunks than the budget, the surplus is dropped *before*
+  the embedding loop using the C6 BM25 scorer, so only the top-N
+  chunks reach bge-m3. Reuses the C6 tokenizer; no new deps. Caps
+  embedding cost on longform pages (Wikipedia, arXiv PDFs).
+  Measurement at `TRAWL_CHUNK_BUDGET=100` (4 longform cases × 2 modes
+  × 3 iterations): `retrieval_ms.p95` drops 6,002 ms → 1,890 ms (69%
+  reduction), 4/4 cases keep the same post-reranker rank-1 chunk,
+  parity matrix unchanged at the pre-existing 14/15 (the lone fail,
+  `kbo_schedule`, already fails on clean `develop`). New
+  `PipelineResult.n_chunks_embedded` field + `telemetry.jsonl`
+  schema v1 entry reports the post-prefilter count so hit rate is
+  measurable without a rerun. Spec:
+  `docs/superpowers/specs/2026-04-20-longform-retrieval-cost-design.md`.
+  Follows up on the C5 premise spike conclusion
+  (`docs/superpowers/specs/2026-04-20-c5-hierarchical-fetch-conclusion.md`).
+    * New env var: `TRAWL_CHUNK_BUDGET` (default `0`).
+    * 8 unit tests in `tests/test_retrieval_chunk_budget.py`
+      (monkey-patched embeddings).
+    * Measurement script: `benchmarks/longform_retrieval_cost_measure.py`
+      (takes `--budget`, `--iterations`, writes JSON summary + md
+      report to `benchmarks/results/longform-retrieval-cost/<ts>/`).
 - **C6 — BM25 hybrid retrieval (opt-in).** New module
   `src/trawl/bm25.py` exposes a rule-based multilingual tokenizer
   (Latin word-level / Hangul character bigrams / kana & CJK-unified

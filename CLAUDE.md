@@ -111,6 +111,17 @@ trawl directory. Humans should read `README.md` first, then
     conservative in the `code_heavy_query` A/B measurement (no content
     regression, no assertion wins). Tune via `TRAWL_HYBRID_RRF_K`
     (default 60). See `notes/c6-hybrid-measurement.md` for A/B results.
+  - **Chunk budget prefilter** (longform follow-up, **default off**,
+    opt-in) — `TRAWL_CHUNK_BUDGET=100` (or any positive int) caps the
+    pool sent to bge-m3. When a page's chunk count exceeds the budget,
+    the BM25 scorer from C6 ranks the chunks and only the top-N reach
+    the embedding stage; reranker input window unchanged. Reuses the
+    C6 tokenizer, so the flag stacks with `TRAWL_HYBRID_RETRIEVAL=1`.
+    Measurement at budget=100 on 4 longform cases cuts overall
+    retrieval_ms.p95 from 6,002 ms to 1,890 ms (69%) with 4/4 rank-1
+    identity preserved. `PipelineResult.n_chunks_embedded` reports the
+    post-prefilter count. See
+    `docs/superpowers/specs/2026-04-20-longform-retrieval-cost-design.md`.
 
 ## Quick Reference
 

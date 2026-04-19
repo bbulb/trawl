@@ -40,6 +40,7 @@ class RetrievalResult:
     elapsed_ms: int
     embed_calls: int
     error: str | None = None
+    n_chunks_embedded: int = 0
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -80,6 +81,7 @@ def retrieve(
     model: str = DEFAULT_EMBEDDING_MODEL,
     extra_query_texts: list[str] | None = None,
     hybrid: bool = False,
+    chunk_budget: int = 0,
 ) -> RetrievalResult:
     """Embed query + chunks, return the top-k chunks by cosine similarity.
 
@@ -91,12 +93,40 @@ def retrieve(
     on each returned `ScoredChunk` still holds the raw dense cosine —
     the fused ordering only affects which chunks make the top-k, not
     downstream consumers (telemetry, reranker) that read `score`.
+
+    When `chunk_budget > 0` and `len(chunks) > chunk_budget`, a BM25
+    prefilter keeps only the top `chunk_budget` chunks before
+    embedding. Caps embedding cost for longform pages (wiki / long
+    PDF). `n_chunks_embedded` on the result reports the post-prefilter
+    count (equals `len(chunks)` when prefilter is a no-op).
     """
     if not chunks:
-        return RetrievalResult(scored=[], elapsed_ms=0, embed_calls=0)
+        return RetrievalResult(scored=[], elapsed_ms=0, embed_calls=0, n_chunks_embedded=0)
 
     t0 = time.monotonic()
     embed_calls = 0
+
+    # Embed the markdown-stripped `embed_text` so links/images don't
+    # pollute the vectors. Heading path is still prepended because it
+    # carries strong topical signal ("명량 해전" header tells the
+    # embedding what the section is about even before the body).
+    chunk_texts = [
+        (c.heading + "\n\n" + (c.embed_text or c.text))
+        if c.heading
+        else (c.embed_text or c.text)
+        for c in chunks
+    ]
+
+    # BM25 prefilter. Only runs when a positive budget is set and the
+    # pool actually exceeds it; otherwise it's cheap no-op. We keep
+    # the surviving indices in ascending order so downstream code
+    # doesn't have to think about permutation.
+    if chunk_budget > 0 and len(chunks) > chunk_budget:
+        ranked = bm25_rank(query, chunk_texts)
+        kept = sorted(ranked[:chunk_budget])
+        chunks = [chunks[i] for i in kept]
+        chunk_texts = [chunk_texts[i] for i in kept]
+
     try:
         with httpx.Client(timeout=HTTP_TIMEOUT_S) as client:
             query_inputs = [query]
@@ -105,16 +135,6 @@ def retrieve(
             q_embs = _embed_batch(client, base_url, model, query_inputs)
             embed_calls += 1
 
-            # Embed the markdown-stripped `embed_text` so links/images don't
-            # pollute the vectors. Heading path is still prepended because it
-            # carries strong topical signal ("명량 해전" header tells the
-            # embedding what the section is about even before the body).
-            chunk_texts = [
-                (c.heading + "\n\n" + (c.embed_text or c.text))
-                if c.heading
-                else (c.embed_text or c.text)
-                for c in chunks
-            ]
             chunk_embs: list[list[float]] = []
             for start in range(0, len(chunk_texts), EMBEDDING_BATCH):
                 batch = chunk_texts[start : start + EMBEDDING_BATCH]
@@ -126,6 +146,7 @@ def retrieve(
             elapsed_ms=int((time.monotonic() - t0) * 1000),
             embed_calls=embed_calls,
             error=f"{type(e).__name__}: {e}",
+            n_chunks_embedded=len(chunks),
         )
 
     # Average query + extras into a single vector for scoring.
@@ -146,4 +167,5 @@ def retrieve(
         scored=scored[:k],
         elapsed_ms=int((time.monotonic() - t0) * 1000),
         embed_calls=embed_calls,
+        n_chunks_embedded=len(chunks),
     )
