@@ -29,6 +29,20 @@ not yet follow semver strictly — expect breaking changes before
   empty containers; legacy callers see no behaviour change. MCP
   responses include the new fields automatically (via `to_dict`).
   Spec: `docs/superpowers/specs/2026-04-19-c16-compositional-payload-design.md`.
+- **Agent-patterns assertion DSL — C16 enrichment keys.** Extends the
+  `tests/agent_patterns/` assertion whitelist with four keys that let
+  pattern authors verify the compositional payload directly:
+    * `excerpts_min_count` — `int` or `">= N"`, measured against the
+      `excerpts` field length.
+    * `outbound_links_contain_any` — `list[str]` of substrings
+      matched against each link's `url` or `anchor_text`.
+    * `page_entities_contain_any` — `list[str]` of substrings matched
+      against the emitted `page_entities`.
+    * `chain_hints_has_key` — `str`, the expected top-level key in the
+      `chain_hints` dict.
+  Applied to the two `workflows.yaml` compositional patterns so arXiv
+  / GitHub host-specific `chain_hints` (`pdf_template`, `raw_template`)
+  and minimum excerpt counts are now live assertions.
 - **C7 — PDF Content-Type HEAD probe.** `fetchers/pdf.probe(url)`
   performs a small HEAD request before launching Playwright when the
   URL does not match the existing `.pdf` / `/pdf/` suffix heuristic.
