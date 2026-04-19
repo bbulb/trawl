@@ -1,4 +1,4 @@
-# trawl parity matrix — 12 golden cases.
+# trawl parity matrix — 15 golden cases.
 #
 # Each case has a URL, a free-form `query` (the kind of phrasing a real
 # user would type), and `ground_truth` (facts that MUST appear in the
