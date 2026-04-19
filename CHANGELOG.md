@@ -77,6 +77,65 @@ not yet follow semver strictly — expect breaking changes before
   C7 must never make trawl slower than before. Closes the
   ARCHITECTURE.md "Future work #4" item. Mirrors the existing
   `passthrough.probe` pattern.
+- **Repeating-record chunking (`src/trawl/records.py`).** Scans
+  rendered HTML for runs of sibling elements with the same
+  `(tag, sorted_class_list)` signature (≥3 members, excluding
+  nav/sidebar/tab noise) and injects ASCII sentinel lines around
+  each record before extraction. The chunker honours the sentinels
+  and emits one atomic chunk per record regardless of `max_chars`.
+  Covers job listings, news cards, product rows, bestseller grids —
+  anywhere retrieval should rank individual records instead of
+  fragmenting mid-record. Three new parity cases
+  (`wanted_jobs`, `hada_news`, `aladin_bestsellers`) bring the
+  matrix to **15/15**. Toggle via `TRAWL_RECORDS` (default on).
+- **Raw passthrough for structured-data URLs
+  (`src/trawl/fetchers/passthrough.py`).** URLs with `.json`,
+  `.xml`, `.rss`, or `.atom` suffixes skip Playwright entirely and
+  return raw bytes via httpx, capped at
+  `TRAWL_PASSTHROUGH_MAX_BYTES` (default 256 KB). Suffix-less
+  endpoints are detected by a HEAD pre-probe. A post-detection path
+  covers the case where Chromium wraps a JSON response in a viewer
+  DOM: the rendered Content-Type triggers a re-fetch of raw bytes.
+  Passthrough URLs don't require a query.
+- **Opt-in telemetry (`src/trawl/telemetry.py`).** Activated with
+  `TRAWL_TELEMETRY=1`; appends one JSON line per `fetch_relevant()`
+  call to `~/.cache/trawl/telemetry.jsonl` (override via
+  `TRAWL_TELEMETRY_PATH`). Single-generation size rotation at 64 MB.
+  Captures host, URL, query SHA-1 prefix (never plaintext query),
+  fetcher path, profile hit/miss, rerank/HyDE flags, and latency
+  breakdown. Purpose: feed the C4 decision in `notes/RESEARCH.md`.
+- **Profile host-transfer path.** When no exact-URL profile exists
+  for a URL but the host has other profiles, trawl tries each
+  existing selector, verifies the matched subtree's char count is
+  within `[TRAWL_PROFILE_TRANSFER_MIN_RATIO,
+  TRAWL_PROFILE_TRANSFER_MAX_RATIO]` of the recorded size, and on
+  success persists a copy of the profile under the new URL's hash
+  for future exact-match hits. Extends the VLM-profile ROI to sibling
+  URLs without a second VLM call.
+- **Content-ready wait detector for Playwright fetches.** Replaces
+  the previous fixed `wait_for_ms` delay with an async predicate
+  that polls DOM state (text length, stable ticks, absence of
+  placeholder patterns) up to the `wait_for_ms` ceiling. Measured:
+  avg fetch_ms 67% shorter across the parity matrix; Discourse/chat
+  SPAs that held websockets open (e.g. NVIDIA forum: 17s → 4.4s) no
+  longer wait for `networkidle`. Guarded by a `NETWORKIDLE_BUDGET_MS`
+  short-fuse so suffering SPAs drop to `domcontentloaded`.
+- **Streamable-HTTP MCP transport.** `python -m trawl_mcp --http
+  [HOST:PORT]` starts the same tool set over streamable HTTP (default
+  `127.0.0.1:8765`) in addition to the default stdio transport. Lets
+  HTTP-only MCP clients integrate trawl without a stdio wrapper.
+- **Reranker title-injection (C3 spike conclusion).** With
+  `TRAWL_RERANK_INCLUDE_TITLE=1` (default on), reranker inputs are
+  formatted as `Title: <page_title>\nSection: <heading>\nbody`.
+  Average +0.27 top-1 relevance score vs bare body on the parity
+  matrix; 0 regressions; max improvement +2.92
+  (`pricing_page_ko`). Fine-tune half of the original C3 proposal
+  remains deferred.
+- **WCXB external benchmark integration (`benchmarks/wcxb/`).**
+  One-shot runner against the Murrough-Foley WCXB dev split (1,497
+  pages / 7 page types / 1,613 domains, CC-BY-4.0). Latest numbers:
+  trawl `html_to_markdown` F1 = 0.777 vs in-environment Trafilatura
+  baseline 0.750. Pinned SHA-256 manifest for reproducibility.
 - **VLM profile prompt v2 and mapper noise filter.** The VLM prompt
   now instructs the model to pick mid-paragraph text instead of section
   headings (which duplicate in sidebar TOCs) and explicitly warns about
@@ -86,7 +145,6 @@ not yet follow semver strictly — expect breaking changes before
   prevents LCA collapse to `<body>` when sidebar entries match heading
   text. Profile eval results on 36 diverse sites: success rate 89% to
   92%, IDEAL selectors 10 to 16 (+60%), docs category 67% to 100%.
-  Parity matrix stays 12/12.
 - **Benchmark suite (`benchmarks/`).** trawl vs Jina Reader (r.jina.ai)
   comparison framework with 12 test cases across docs, wiki, news,
   product, QA, finance, and blog categories. Measures latency, token
@@ -149,9 +207,9 @@ not yet follow semver strictly — expect breaking changes before
 | `TRAWL_HYDE_URL` (was `LLAMA_SERVER_URL`) | `http://localhost:8080/v1` | `http://localhost:8082/v1` |
 | `TRAWL_HYDE_MODEL` (was `HYDE_MODEL`) | `gemma-4-26B-A4B-it-Q8_0.gguf` | `gemma-4-E4B-it-Q8_0.gguf` |
 
-No code change to the pipeline or fetchers; the 11/11 parity matrix
-still passes (HyDE is off by default, so the changed defaults only
-matter when a caller explicitly sets `use_hyde=True`).
+No code change to the pipeline or fetchers; the parity matrix still
+passes (HyDE is off by default, so the changed defaults only matter
+when a caller explicitly sets `use_hyde=True`).
 
 
 ## [0.1.0] — 2026-04-10
