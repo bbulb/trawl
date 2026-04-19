@@ -122,13 +122,10 @@ mamba run -n trawl python tests/test_agent_patterns.py --regression
 | `suggest_profile` | bool |
 | `content_type` | string (passthrough 검증) |
 | `truncated` | bool |
-<<<<<<< HEAD
 | `excerpts_min_count` | `int` 또는 `">= N"` — C16 `excerpts` 길이 |
 | `outbound_links_contain_any` | list[str] — substring이 URL 또는 anchor_text에 등장 |
 | `page_entities_contain_any` | list[str] — substring이 `page_entities` 중 하나에 포함 |
 | `chain_hints_has_key` | string — `chain_hints` dict가 이 top-level key 보유 |
-=======
->>>>>>> origin/develop
 
 | Budget | 의미 |
 |---|---|
