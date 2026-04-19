@@ -136,6 +136,8 @@ def test_excerpts_min_count_passes_when_enough():
                 {"chunk_idx": 1, "summary_120c": "b"},
             ]
         },
+        {"excerpts": [{"chunk_idx": 0, "summary_120c": "a"},
+                      {"chunk_idx": 1, "summary_120c": "b"}]},
     )
     assert fails == []
 
@@ -173,6 +175,10 @@ def test_outbound_links_contain_any_passes_on_url_match():
                 },
             ]
         },
+        {"outbound_links": [
+            {"url": "https://arxiv.org/pdf/2402.03216", "anchor_text": "PDF",
+             "in_chunk_idx": 0},
+        ]},
     )
     assert fails == []
 
@@ -189,6 +195,11 @@ def test_outbound_links_contain_any_passes_on_anchor_match():
                 },
             ]
         },
+        {"outbound_links": [
+            {"url": "https://example.com/p.pdf",
+             "anchor_text": "Download whitepaper",
+             "in_chunk_idx": 0},
+        ]},
     )
     assert fails == []
 
@@ -201,6 +212,10 @@ def test_outbound_links_contain_any_fails_when_missing():
                 {"url": "https://arxiv.org/pdf/x", "anchor_text": "PDF", "in_chunk_idx": 0},
             ]
         },
+        {"outbound_links": [
+            {"url": "https://arxiv.org/pdf/x", "anchor_text": "PDF",
+             "in_chunk_idx": 0},
+        ]},
     )
     assert len(fails) == 1
     assert "outbound_links_contain_any" in fails[0]
@@ -246,6 +261,8 @@ def test_chain_hints_has_key_passes_when_present():
                 "recommended_followup_filter": "site:arxiv.org",
             }
         },
+        {"chain_hints": {"pdf_template": "https://arxiv.org/pdf/{id}",
+                         "recommended_followup_filter": "site:arxiv.org"}},
     )
     assert fails == []
 
