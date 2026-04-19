@@ -1,0 +1,386 @@
+# shard: coding — Claude Code/openclaw/hermes의 코딩 도우미 호출 양상.
+#
+# 이 shard의 모든 패턴은 single_fetch 또는 code_heavy_query 카테고리에
+# 속한다 (반복 visit·host transfer·compositional은 workflows.yaml로
+# 분리). assertion·budget는 보수적으로 잡아 사이트 개편 등으로 ground
+# truth가 흔들려도 false negative 가능성을 낮췄다.
+#
+# meta.drives 는 어느 후속 spike의 측정에 활용되는지 표기:
+#   - C6 hybrid     dense+sparse 도입 전·후 recall 비교
+#   - C7 HEAD probe Content-Type 라우팅 검증
+#   - C8 cache      반복 호출 latency 비교 (workflows.yaml에서 주로 활용)
+#   - C9 ceiling    per-host wait_for_ms 학습 신호
+
+patterns:
+  # ============================================================
+  # Python 생태계 (5)
+  # ============================================================
+
+  - id: claude_code_python_asyncio_lookup
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "Python stdlib asyncio docs에서 task gather 사용법"
+    url: "https://docs.python.org/3/library/asyncio-task.html"
+    query: "how to gather coroutines and handle exceptions"
+    live: required
+    assertions:
+      chunks_contain_any: ["asyncio.gather", "TaskGroup", "create_task"]
+      n_chunks_returned: ">= 3"
+      profile_used: false
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+    meta:
+      drives: ["C6 hybrid"]
+
+  - id: claude_code_python_pathlib_lookup
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "Python pathlib Path 사용법 — glob/iterdir 같은 고빈도 메서드"
+    url: "https://docs.python.org/3/library/pathlib.html"
+    query: "iterate over files matching a pattern recursively"
+    live: required
+    assertions:
+      chunks_contain_any: ["rglob", "glob", "iterdir"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+    meta:
+      drives: ["C6 hybrid"]
+
+  - id: claude_code_pypi_requests_page
+    primary_agent: [claude_code]
+    category: single_fetch
+    description: "PyPI의 requests 패키지 페이지에서 latest version + summary"
+    url: "https://pypi.org/project/requests/"
+    query: "what version of requests is the latest stable release"
+    live: required
+    assertions:
+      chunks_contain_any: ["requests", "Python HTTP"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 12000
+
+  - id: claude_code_pydantic_v2_validators
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "Pydantic v2 docs — validator decorator 사용법"
+    url: "https://docs.pydantic.dev/latest/concepts/validators/"
+    query: "how to write a field validator with mode before"
+    live: required
+    assertions:
+      chunks_contain_any: ["@field_validator", "field_validator", "mode='before'", "mode=\"before\""]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+    meta:
+      drives: ["C6 hybrid"]
+
+  - id: claude_code_fastapi_dependency_injection
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "FastAPI dependency injection docs"
+    url: "https://fastapi.tiangolo.com/tutorial/dependencies/"
+    query: "how to declare a dependency that returns a database session"
+    live: required
+    assertions:
+      chunks_contain_any: ["Depends", "yield", "dependency"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  # ============================================================
+  # JavaScript / TypeScript / Web (4)
+  # ============================================================
+
+  - id: claude_code_mdn_fetch_api
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "MDN fetch() API 사용법 — POST + JSON body"
+    url: "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch"
+    query: "send a POST request with a JSON body using fetch"
+    live: required
+    assertions:
+      chunks_contain_any: ["JSON.stringify", "Content-Type", "method:"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: claude_code_react_hooks_useeffect
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "React docs — useEffect 사용법과 cleanup 패턴"
+    url: "https://react.dev/reference/react/useEffect"
+    query: "how to clean up subscriptions and timers in useEffect"
+    live: required
+    assertions:
+      chunks_contain_any: ["return () =>", "cleanup", "useEffect"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: claude_code_typescript_handbook_generics
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "TypeScript handbook — generics 기본"
+    url: "https://www.typescriptlang.org/docs/handbook/2/generics.html"
+    query: "how to constrain a generic type parameter to extend an interface"
+    live: required
+    assertions:
+      chunks_contain_any: ["extends", "Generic Constraints", "<T extends"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: claude_code_npm_package_axios
+    primary_agent: [claude_code]
+    category: single_fetch
+    description: "npmjs.com axios 패키지 페이지 — 설치/usage"
+    url: "https://www.npmjs.com/package/axios"
+    query: "how to install axios and make a GET request"
+    live: required
+    assertions:
+      chunks_contain_any: ["npm install axios", "axios.get", "yarn add axios"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  # ============================================================
+  # 시스템·언어 docs (4)
+  # ============================================================
+
+  - id: claude_code_rust_std_hashmap
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "Rust std::collections::HashMap docs"
+    url: "https://doc.rust-lang.org/std/collections/struct.HashMap.html"
+    query: "how to insert and retrieve values with HashMap entry API"
+    live: required
+    assertions:
+      chunks_contain_any: ["entry", "or_insert", "HashMap"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: claude_code_go_database_sql
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "Go database/sql 패키지 — context-aware queries"
+    url: "https://pkg.go.dev/database/sql"
+    query: "how to use QueryContext to execute a query with timeout"
+    live: required
+    assertions:
+      chunks_contain_any: ["QueryContext", "context.Context"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: claude_code_man_curl_options
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "curl manpage online — header / silent / follow-redirect 옵션"
+    url: "https://curl.se/docs/manpage.html"
+    query: "how to send a custom Authorization header with curl and follow redirects silently"
+    live: required
+    assertions:
+      chunks_contain_any: ["-H", "--header", "-L", "--location", "-s", "--silent"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: claude_code_postgres_jsonb_indexes
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "PostgreSQL docs — jsonb GIN indexes"
+    url: "https://www.postgresql.org/docs/current/datatype-json.html"
+    query: "create a GIN index on a jsonb column for fast key existence queries"
+    live: required
+    assertions:
+      chunks_contain_any: ["GIN", "jsonb", "USING gin"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  # ============================================================
+  # 인프라 / 클라우드 docs (3)
+  # ============================================================
+
+  - id: claude_code_docker_compose_volumes
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "Docker Compose docs — 볼륨 마운트 정의"
+    url: "https://docs.docker.com/compose/compose-file/07-volumes/"
+    query: "how to define a named volume and mount it into a service"
+    live: required
+    assertions:
+      chunks_contain_any: ["volumes:", "named volume", "driver"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: claude_code_k8s_configmap_envvar
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "Kubernetes docs — ConfigMap을 환경변수로 주입"
+    url: "https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/"
+    query: "use ConfigMap data as environment variables in a Pod"
+    live: required
+    assertions:
+      chunks_contain_any: ["envFrom", "configMapKeyRef", "ConfigMap"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: claude_code_aws_lambda_python_runtime
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "AWS Lambda Python runtime docs — handler 시그니처"
+    url: "https://docs.aws.amazon.com/lambda/latest/dg/python-handler.html"
+    query: "lambda handler function signature in python"
+    live: required
+    assertions:
+      chunks_contain_any: ["def lambda_handler", "event", "context"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  # ============================================================
+  # GitHub (3)
+  # ============================================================
+
+  - id: claude_code_github_repo_anthropic_sdk_python
+    primary_agent: [claude_code]
+    category: single_fetch
+    description: "GitHub repo README — anthropic SDK Python"
+    url: "https://github.com/anthropics/anthropic-sdk-python"
+    query: "how to install the anthropic SDK and make a basic request"
+    live: required
+    assertions:
+      chunks_contain_any: ["pip install anthropic", "anthropic"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 12000
+
+  - id: claude_code_github_issue_thread
+    primary_agent: [claude_code]
+    category: single_fetch
+    description: "GitHub issue thread — playwright Python issue (실존 long-thread)"
+    url: "https://github.com/microsoft/playwright-python/issues/1761"
+    query: "what was the workaround for this issue"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: claude_code_github_pr_with_discussion
+    primary_agent: [claude_code]
+    category: single_fetch
+    description: "GitHub PR with review discussion — bun release PR"
+    url: "https://github.com/oven-sh/bun/pull/19200"
+    query: "what changes does this PR introduce"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  # ============================================================
+  # Q&A (2)
+  # ============================================================
+
+  - id: claude_code_stackoverflow_python_async_subprocess
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "Stack Overflow — async subprocess.run timeout"
+    url: "https://stackoverflow.com/questions/44488350/python-asyncio-subprocess-with-timeout"
+    query: "asyncio subprocess with timeout"
+    live: required
+    assertions:
+      chunks_contain_any: ["asyncio", "subprocess", "wait_for", "timeout"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 22000   # Cloudflare stealth 비용 포함
+
+  - id: claude_code_serverfault_nginx_reverse_proxy
+    primary_agent: [claude_code]
+    category: code_heavy_query
+    description: "Server Fault — nginx reverse proxy headers"
+    url: "https://serverfault.com/questions/378860/nginx-reverse-proxy-cookies"
+    query: "preserve original Host header through nginx reverse proxy"
+    live: required
+    assertions:
+      chunks_contain_any: ["proxy_set_header", "Host", "X-Forwarded-For", "$http_host"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 22000
+
+  # ============================================================
+  # arXiv / 연구 (2)
+  # ============================================================
+
+  - id: claude_code_arxiv_abs_attention
+    primary_agent: [claude_code]
+    category: single_fetch
+    description: "arXiv abstract page (HTML) — Attention is All You Need"
+    url: "https://arxiv.org/abs/1706.03762"
+    query: "what is the main contribution of this paper"
+    live: required
+    assertions:
+      chunks_contain_any: ["Transformer", "attention", "self-attention"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 12000
+
+  - id: claude_code_arxiv_pdf_lora
+    primary_agent: [claude_code]
+    category: single_fetch
+    description: "arXiv PDF (LoRA paper) — PDF fetcher 경로"
+    url: "https://arxiv.org/pdf/2106.09685"
+    query: "what is the rank decomposition used in LoRA"
+    live: required
+    assertions:
+      chunks_contain_any: ["LoRA", "low-rank", "rank"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+      fetcher_used: "pdf"
+    budgets:
+      total_ms_p95: 12000
+
+  # ============================================================
+  # Aggregator / community (1)
+  # ============================================================
+
+  - id: claude_code_hn_item_discussion
+    primary_agent: [claude_code]
+    category: single_fetch
+    description: "Hacker News item discussion (오래된 안정 ID)"
+    url: "https://news.ycombinator.com/item?id=8863"
+    query: "what is this discussion about"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 12000

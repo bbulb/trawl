@@ -15,7 +15,11 @@ build/
 tests/results/2*/
 tests/results/*.json
 tests/results/_audit_records/
+tests/results/agent_patterns_*/
 !tests/results/.gitkeep
+
+# agent_patterns local baseline (per-environment latencies; not for upstream)
+tests/agent_patterns/baseline.json
 
 # benchmark outputs
 benchmarks/results/
