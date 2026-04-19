@@ -17,10 +17,10 @@ from __future__ import annotations
 import logging
 import os
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from urllib.parse import urlsplit
 
-from . import chunking, extraction, hyde, reranking, retrieval, telemetry
+from . import chunking, enrichment, extraction, hyde, reranking, retrieval, telemetry
 from .fetchers import github, passthrough, pdf, playwright, stackexchange, wikipedia, youtube
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,14 @@ class PipelineResult:
     content_type: str | None = None
     truncated: bool = False
     page_title: str = ""
+    # C16 — compositional payload enrichment. All four fields populate
+    # from `src/trawl/enrichment.py` (no LLM, no network) so agents can
+    # chain follow-up fetches without re-parsing markdown. See
+    # docs/superpowers/specs/2026-04-19-c16-compositional-payload-design.md.
+    excerpts: list[dict] = field(default_factory=list)
+    outbound_links: list[dict] = field(default_factory=list)
+    page_entities: list[str] = field(default_factory=list)
+    chain_hints: dict = field(default_factory=dict)
 
     @property
     def output_chars(self) -> int:
@@ -365,10 +373,16 @@ def _build_profile_result(
         else:
             final_scored = retrieved.scored
         retrieved_dicts = [_chunk_to_dict(s.chunk, score=s.score) for s in final_scored]
+        emitted_chunks = [s.chunk for s in final_scored]
     else:
         path = "profile_direct_large"
         retrieved_dicts = [_chunk_to_dict(c, score=None) for c in chunks]
         retrieval_ms = 0
+        emitted_chunks = list(chunks)
+
+    if path == "profile_direct":
+        # Direct path returned all chunks above; mirror them for enrichment.
+        emitted_chunks = list(chunks)
 
     return PipelineResult(
         **base_kwargs,
@@ -378,6 +392,12 @@ def _build_profile_result(
         path=path,
         rerank_used=use_rerank and path == "profile_retrieval",
         rerank_ms=rerank_ms,
+        excerpts=enrichment.extract_excerpts(emitted_chunks),
+        outbound_links=enrichment.extract_outbound_links(emitted_chunks),
+        page_entities=enrichment.extract_page_entities(
+            page_title, [getattr(c, "heading_path", []) for c in emitted_chunks]
+        ),
+        chain_hints=enrichment.derive_chain_hints(url),
     )
 
 
@@ -837,6 +857,7 @@ def _run_full_pipeline(
     else:
         final_scored = retrieved.scored
 
+    emitted_chunks = [s.chunk for s in final_scored]
     return PipelineResult(
         url=url,
         query=query,
@@ -850,7 +871,13 @@ def _run_full_pipeline(
         structured_path=False,
         hyde_used=use_hyde,
         hyde_text=hyde_text,
-        chunks=[_chunk_to_dict(s.chunk, score=s.score) for s in final_scored],
+        chunks=[_chunk_to_dict(c, score=s.score) for c, s in zip(emitted_chunks, final_scored, strict=True)],
+        excerpts=enrichment.extract_excerpts(emitted_chunks),
+        outbound_links=enrichment.extract_outbound_links(emitted_chunks),
+        page_entities=enrichment.extract_page_entities(
+            page_title, [getattr(c, "heading_path", []) for c in emitted_chunks]
+        ),
+        chain_hints=enrichment.derive_chain_hints(url),
         path="full_page_retrieval",
         rerank_used=use_rerank,
         rerank_ms=rerank_ms,
