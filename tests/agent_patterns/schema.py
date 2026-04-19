@@ -155,9 +155,7 @@ def parse_pattern(raw: dict[str, Any], *, shard: str = "") -> Pattern:
 
     category = raw.get("category")
     if category not in CATEGORIES:
-        raise _err(
-            f"category {category!r} not in allowed set {sorted(CATEGORIES)}"
-        )
+        raise _err(f"category {category!r} not in allowed set {sorted(CATEGORIES)}")
 
     description = str(raw.get("description", "")).strip()
     if not description:
@@ -171,9 +169,7 @@ def parse_pattern(raw: dict[str, Any], *, shard: str = "") -> Pattern:
     has_single = "url" in raw or "query" in raw
 
     if has_steps and has_single:
-        raise _err(
-            "pattern must use EITHER top-level url/query OR steps[], not both"
-        )
+        raise _err("pattern must use EITHER top-level url/query OR steps[], not both")
     if not has_steps and not has_single:
         raise _err("pattern must define either url+query or steps[]")
 
@@ -201,9 +197,7 @@ def parse_pattern(raw: dict[str, Any], *, shard: str = "") -> Pattern:
         steps_raw = raw.get("steps") or []
         if not isinstance(steps_raw, list):
             raise _err("'steps' must be a list")
-        pattern.steps = [
-            _parse_step(s, idx, _err) for idx, s in enumerate(steps_raw)
-        ]
+        pattern.steps = [_parse_step(s, idx, _err) for idx, s in enumerate(steps_raw)]
         if not pattern.steps:
             raise _err("'steps' must contain at least one step")
 
@@ -221,9 +215,7 @@ def _parse_step(raw: Any, idx: int, _err) -> PatternStep:
     ref = raw.get("ref")
     if ref is not None:
         if not isinstance(ref, int) or ref < 0 or ref >= idx:
-            raise _err(
-                f"step {idx}: ref={ref!r} must be an integer in [0, {idx})"
-            )
+            raise _err(f"step {idx}: ref={ref!r} must be an integer in [0, {idx})")
         if "url" in raw or "query" in raw:
             raise _err(
                 f"step {idx}: when ref= is set, url/query must come from the referenced step"
@@ -254,9 +246,7 @@ def _validate_assertions(raw: Any, _err) -> dict[str, Any]:
         raise _err(f"assertions must be a mapping, got {type(raw).__name__}")
     bad_keys = set(raw) - ASSERTION_KEYS
     if bad_keys:
-        raise _err(
-            f"unknown assertion keys {sorted(bad_keys)}; allowed: {sorted(ASSERTION_KEYS)}"
-        )
+        raise _err(f"unknown assertion keys {sorted(bad_keys)}; allowed: {sorted(ASSERTION_KEYS)}")
     for key, value in raw.items():
         _check_assertion_shape(key, value, _err)
     return dict(raw)
@@ -274,9 +264,7 @@ def _check_assertion_shape(key: str, value: Any, _err) -> None:
             raise _err(f"assertion {key!r}: must be a regex string")
     elif key == "n_chunks_returned":
         if not isinstance(value, (int, str)):
-            raise _err(
-                f"assertion {key!r}: must be int or comparison string like '>= 3'"
-            )
+            raise _err(f"assertion {key!r}: must be int or comparison string like '>= 3'")
         if isinstance(value, str):
             _parse_comparison(value, _err, key=key)
     elif key in {"profile_used", "error_is_none", "suggest_profile", "truncated"}:
@@ -287,9 +275,7 @@ def _check_assertion_shape(key: str, value: Any, _err) -> None:
             raise _err(f"assertion {key!r}: must be string")
     elif key == "excerpts_min_count":
         if not isinstance(value, (int, str)):
-            raise _err(
-                f"assertion {key!r}: must be int or comparison string like '>= 2'"
-            )
+            raise _err(f"assertion {key!r}: must be int or comparison string like '>= 2'")
         if isinstance(value, str):
             _parse_comparison(value, _err, key=key)
         elif value < 0:
@@ -309,9 +295,7 @@ def _validate_budgets(raw: Any, _err) -> dict[str, Any]:
         raise _err(f"budgets must be a mapping, got {type(raw).__name__}")
     bad_keys = set(raw) - BUDGET_KEYS
     if bad_keys:
-        raise _err(
-            f"unknown budget keys {sorted(bad_keys)}; allowed: {sorted(BUDGET_KEYS)}"
-        )
+        raise _err(f"unknown budget keys {sorted(bad_keys)}; allowed: {sorted(BUDGET_KEYS)}")
     for key, value in raw.items():
         if not isinstance(value, (int, float)):
             raise _err(f"budget {key!r}: must be numeric")
@@ -329,17 +313,13 @@ def _parse_comparison(spec: str, _err, *, key: str) -> tuple[str, int]:
     spec = spec.strip()
     for op in (">=", "<=", "==", "!=", ">", "<"):
         if spec.startswith(op):
-            rest = spec[len(op):].strip()
+            rest = spec[len(op) :].strip()
             try:
                 threshold = int(rest)
             except ValueError as e:
-                raise _err(
-                    f"{key!r}: comparison threshold not an integer: {spec!r}"
-                ) from e
+                raise _err(f"{key!r}: comparison threshold not an integer: {spec!r}") from e
             return op, threshold
-    raise _err(
-        f"{key!r}: comparison must start with one of >= <= == != > <, got {spec!r}"
-    )
+    raise _err(f"{key!r}: comparison must start with one of >= <= == != > <, got {spec!r}")
 
 
 def evaluate_comparison(spec: str | int, actual: int) -> bool:
