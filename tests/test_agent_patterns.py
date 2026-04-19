@@ -249,7 +249,6 @@ def _evaluate_assertions(
         elif key == "outbound_links_contain_any":
             links = measurements.get("outbound_links") or []
             haystack = "\n".join(
-                (lk.get("url") or "") + "\n" + (lk.get("anchor_text") or "") for lk in links
                 (lk.get("url") or "") + "\n" + (lk.get("anchor_text") or "")
                 for lk in links
             )
@@ -274,9 +273,6 @@ def _evaluate_assertions(
             actual = bool(measurements.get("cache_hit"))
             if actual is not bool(expected):
                 fails.append(f"cache_hit: expected {expected}, got {actual}")
-                fails.append(
-                    f"chain_hints_has_key: {expected!r} not in keys {sorted(hints)!r}"
-                )
     return fails
 
 

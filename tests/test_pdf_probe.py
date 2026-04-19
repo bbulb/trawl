@@ -228,11 +228,6 @@ def test_pipeline_keeps_pdf_for_suffix_url(monkeypatch):
         lambda q, c, *, k, extra_query_texts=None, hybrid=False: RetrievalResult(
             scored=[], elapsed_ms=0, embed_calls=0, error=None
         ),
-        lambda q, c, *, k, extra_query_texts=None: RetrievalResult(
-            scored=[], elapsed_ms=0, embed_calls=0, error=None
-        ),
-        ret_mod, "retrieve",
-        lambda q, c, *, k, extra_query_texts=None: RetrievalResult(scored=[], elapsed_ms=0, embed_calls=0, error=None),
     )
     monkeypatch.delenv("TRAWL_TELEMETRY", raising=False)
 
@@ -275,11 +270,6 @@ def test_pipeline_falls_through_to_html_when_probe_false(monkeypatch):
         lambda q, c, *, k, extra_query_texts=None, hybrid=False: RetrievalResult(
             scored=[], elapsed_ms=0, embed_calls=0, error=None
         ),
-        lambda q, c, *, k, extra_query_texts=None: RetrievalResult(
-            scored=[], elapsed_ms=0, embed_calls=0, error=None
-        ),
-        ret_mod, "retrieve",
-        lambda q, c, *, k, extra_query_texts=None: RetrievalResult(scored=[], elapsed_ms=0, embed_calls=0, error=None),
     )
     monkeypatch.delenv("TRAWL_TELEMETRY", raising=False)
 
