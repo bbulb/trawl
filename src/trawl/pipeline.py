@@ -21,6 +21,7 @@ from dataclasses import asdict, dataclass, field
 from urllib.parse import urlsplit
 
 from . import chunking, enrichment, extraction, fetch_cache, hyde, reranking, retrieval, telemetry
+from . import chunking, enrichment, extraction, hyde, reranking, retrieval, telemetry
 from .fetchers import github, passthrough, pdf, playwright, stackexchange, wikipedia, youtube
 
 logger = logging.getLogger(__name__)
@@ -764,6 +765,26 @@ def _run_full_pipeline(
     fetch_elapsed_ms = 0
     content_type: str | None = None
     fetched_html = ""
+    # 1. Fetch → markdown (or short-circuit for PDF / passthrough)
+    if _is_pdf_url(url):
+        fetched = pdf.fetch(url)
+        markdown = fetched.markdown
+        fetcher_name = "pdf"
+    else:
+        pt_result = _try_passthrough(url, query, t_start)
+        if pt_result is not None:
+            return pt_result
+        # C7: HEAD probe for suffix-less PDFs (download links, redirects).
+        # Mirrors the passthrough.probe pattern: small HEAD lets us catch
+        # `application/pdf` Content-Type before paying for a Playwright
+        # render that would only return PDF viewer chrome. Probe failure
+        # is silent — fall through to the existing HTML path.
+        if pdf.probe(url):
+            fetched = pdf.fetch(url)
+            markdown = fetched.markdown
+            fetcher_name = "pdf-probed"
+        else:
+            fetched, markdown, fetcher_name = _fetch_html(url)
 
     if cache_hit:
         markdown = cached.markdown
