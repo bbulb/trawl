@@ -933,7 +933,6 @@ def _run_full_pipeline(
             _chunk_to_dict(c, score=s.score)
             for c, s in zip(emitted_chunks, final_scored, strict=True)
         ],
-        chunks=[_chunk_to_dict(c, score=s.score) for c, s in zip(emitted_chunks, final_scored, strict=True)],
         excerpts=enrichment.extract_excerpts(emitted_chunks),
         outbound_links=enrichment.extract_outbound_links(emitted_chunks),
         page_entities=enrichment.extract_page_entities(

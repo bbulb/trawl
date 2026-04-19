@@ -59,7 +59,6 @@ def fake_retrieval(monkeypatch):
     """Return a canned retrieval result with one scored chunk."""
 
     def _fake_retrieve(query, chunks, *, k, extra_query_texts=None, hybrid=False):
-    def _fake_retrieve(query, chunks, *, k, extra_query_texts=None):
         scored = [
             ScoredChunk(chunk=c, score=1.0 - i * 0.1) for i, c in enumerate(chunks[: max(k, 1)])
         ]

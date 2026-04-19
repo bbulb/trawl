@@ -173,7 +173,6 @@ def test_pipeline_routes_to_pdf_probed_on_head_hit(monkeypatch):
     from trawl import retrieval as ret_mod
 
     def _fake_retrieve(query, chunks, *, k, extra_query_texts=None, hybrid=False):
-    def _fake_retrieve(query, chunks, *, k, extra_query_texts=None):
         from trawl.retrieval import RetrievalResult
 
         return RetrievalResult(scored=[], elapsed_ms=0, embed_calls=0, error=None)
