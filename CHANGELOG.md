@@ -9,6 +9,26 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Added
 
+- **C6 — BM25 hybrid retrieval (opt-in).** New module
+  `src/trawl/bm25.py` exposes a rule-based multilingual tokenizer
+  (Latin word-level / Hangul character bigrams / kana & CJK-unified
+  single characters), a thin wrapper around `rank_bm25.BM25Okapi`,
+  and a Reciprocal Rank Fusion helper. When
+  `TRAWL_HYBRID_RETRIEVAL=1` is set, `src/trawl/retrieval.py::retrieve()`
+  scores BM25 alongside dense cosine and fuses both rankings via RRF
+  (`k=60`, override with `TRAWL_HYBRID_RRF_K`). `ScoredChunk.score`
+  still carries the raw dense cosine so the reranker and telemetry
+  see the same numbers as before — only the pre-rerank ordering
+  changes. Dense-only behaviour (default off) is bit-for-bit
+  unchanged. Parity matrix stays 15/15 in both modes. Measurement:
+  `notes/c6-hybrid-measurement.md`. Spec:
+  `docs/superpowers/specs/2026-04-19-c6-hybrid-retrieval-design.md`.
+    * New dep: `rank_bm25>=0.2.2` (pure-Python BM25Okapi + numpy).
+    * New env vars: `TRAWL_HYBRID_RETRIEVAL` (default `0`),
+      `TRAWL_HYBRID_RRF_K` (default `60`).
+    * 25 unit tests in `tests/test_bm25.py` + 7 integration tests in
+      `tests/test_retrieval_hybrid.py` (monkey-patched embeddings,
+      no live infra required).
 - **Agent-patterns assertion DSL — `cache_hit` key.** Extends the
   `tests/agent_patterns/` whitelist with a `cache_hit: bool` key that
   mirrors `PipelineResult.cache_hit`. Pattern authors can now assert

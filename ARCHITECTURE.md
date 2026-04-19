@@ -352,10 +352,16 @@ Ordered by expected value-per-hour:
    default to `p95 × 1.5`, clamped to `[1500, 15000] ms`. Disable with
    `TRAWL_HOST_STATS=0`. Spec:
    `docs/superpowers/specs/2026-04-20-c9-per-host-ceiling-design.md`.
-3. **BM25 hybrid retrieval** for code/technical queries. Would need
-   a separate index and a way to detect when the query is
-   code-shaped; probably more effort than it's worth unless we
-   see measurable rank failures from real usage.
+~~3. **BM25 hybrid retrieval**~~ — **Done (C6, 2026-04-20, opt-in).**
+   `src/trawl/bm25.py` adds a rule-based multilingual tokenizer + a
+   `rank_bm25.BM25Okapi` wrapper + RRF fusion (`k=60`). Enabled per
+   call with `TRAWL_HYBRID_RETRIEVAL=1`; `ScoredChunk.score` still
+   carries the dense cosine so downstream reranker / telemetry see
+   the same numbers. Parity stays 15/15 in both modes. Default stays
+   off because the 16-pattern `code_heavy_query` A/B saw no assertion
+   regressions but also no assertion wins at `k=60` — tune or flip
+   default once real usage shows a recall gap. Measurement:
+   `notes/c6-hybrid-measurement.md`.
 ~~4. **Content-Type detection** for PDFs via HEAD requests~~ — **Done
    (C7, 2026-04-19).** `fetchers/pdf.probe(url)` HEAD-pre-probes
    suffix-less URLs and short-circuits to `pdf.fetch()` when the

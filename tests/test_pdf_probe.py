@@ -172,7 +172,7 @@ def test_pipeline_routes_to_pdf_probed_on_head_hit(monkeypatch):
     # Stub embedding to avoid hitting the live :8081 endpoint.
     from trawl import retrieval as ret_mod
 
-    def _fake_retrieve(query, chunks, *, k, extra_query_texts=None):
+    def _fake_retrieve(query, chunks, *, k, extra_query_texts=None, hybrid=False):
         from trawl.retrieval import RetrievalResult
 
         return RetrievalResult(scored=[], elapsed_ms=0, embed_calls=0, error=None)
@@ -225,7 +225,7 @@ def test_pipeline_keeps_pdf_for_suffix_url(monkeypatch):
     monkeypatch.setattr(
         ret_mod,
         "retrieve",
-        lambda q, c, *, k, extra_query_texts=None: RetrievalResult(
+        lambda q, c, *, k, extra_query_texts=None, hybrid=False: RetrievalResult(
             scored=[], elapsed_ms=0, embed_calls=0, error=None
         ),
     )
@@ -267,7 +267,7 @@ def test_pipeline_falls_through_to_html_when_probe_false(monkeypatch):
     monkeypatch.setattr(
         ret_mod,
         "retrieve",
-        lambda q, c, *, k, extra_query_texts=None: RetrievalResult(
+        lambda q, c, *, k, extra_query_texts=None, hybrid=False: RetrievalResult(
             scored=[], elapsed_ms=0, embed_calls=0, error=None
         ),
     )

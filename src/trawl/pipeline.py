@@ -357,7 +357,8 @@ def _build_profile_result(
         t_ret = time.monotonic()
         chosen_k = _adaptive_k(len(chunks), override=k)
         retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
-        retrieved = retrieval.retrieve(query, chunks, k=retrieve_k)
+        hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "0") == "1"
+        retrieved = retrieval.retrieve(query, chunks, k=retrieve_k, hybrid=hybrid_flag)
         retrieval_ms = int((time.monotonic() - t_ret) * 1000)
         if retrieved.error:
             return PipelineResult(
@@ -865,7 +866,10 @@ def _run_full_pipeline(
     # 4. Retrieve + rerank
     chosen_k = _adaptive_k(len(chunks), override=k)
     retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
-    retrieved = retrieval.retrieve(query, chunks, k=retrieve_k, extra_query_texts=extras)
+    hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "0") == "1"
+    retrieved = retrieval.retrieve(
+        query, chunks, k=retrieve_k, extra_query_texts=extras, hybrid=hybrid_flag
+    )
     if retrieved.error:
         return _error_result(
             url,
