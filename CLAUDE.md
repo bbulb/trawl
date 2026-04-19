@@ -86,6 +86,13 @@ trawl directory. Humans should read `README.md` first, then
     (override via `TRAWL_TELEMETRY_PATH`). Single-generation rotation
     at 64 MB. Purpose: feed the C4 decision in `notes/RESEARCH.md`.
     Schema: `src/trawl/telemetry.py` + the C4 spec doc.
+  - **Per-fetch cache** (C8, default on) — successful HTML/PDF fetches
+    are cached in `~/.cache/trawl/fetches/<sha256>.json` for 300 s.
+    Re-fetch of the same URL within TTL skips Playwright +
+    Trafilatura; chunking / embedding / retrieval still run fresh.
+    Disable via `TRAWL_FETCH_CACHE_TTL=0`; relocate via
+    `TRAWL_FETCH_CACHE_PATH`; size cap via `TRAWL_FETCH_CACHE_MAX_MB`
+    (default 100). `PipelineResult.cache_hit` flags the reuse.
 
 ## Quick Reference
 

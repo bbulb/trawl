@@ -9,6 +9,29 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Added
 
+- **C8 — Per-fetch result cache.** New module `src/trawl/fetch_cache.py`
+  caches successful HTML/PDF fetches to
+  `~/.cache/trawl/fetches/<sha256>.json` keyed by URL. Subsequent fetches
+  within the TTL skip Playwright + Trafilatura entirely; chunking,
+  embedding, retrieval, and enrichment still run fresh (query-specific).
+  Expected savings: ~2-5 s per warm repeat visit (60-70% of total
+  latency on repeat_visits workflows).
+    * `PipelineResult.cache_hit: bool` exposes reuse for telemetry /
+      assertion authors (new field, default `False`, no MCP API change).
+    * New env vars `TRAWL_FETCH_CACHE_TTL` (default 300, set `0` to
+      disable), `TRAWL_FETCH_CACHE_PATH` (default
+      `~/.cache/trawl/fetches`), `TRAWL_FETCH_CACHE_MAX_MB` (default
+      100, soft cap with mtime-based LRU trim).
+    * Profile fast/transfer paths, passthrough branches, and error
+      results are never cached — each has a distinct invalidation
+      mode that MVP scope excludes.
+    * Atomic file writes (`tempfile` + `os.replace`). Corrupt or
+      schema-mismatched entries are skipped and deleted on the next
+      read.
+    * 21 unit tests in `tests/test_fetch_cache.py` + 7 pipeline
+      integration tests in `tests/test_pipeline_cache.py`. No live
+      infra required for either.
+  Spec: `docs/superpowers/specs/2026-04-20-c8-per-fetch-cache-design.md`.
 - **C16 — Compositional payload enrichment.** New module
   `src/trawl/enrichment.py` derives four lightweight metadata fields
   from existing extraction output (no LLM, no network) so agents can
