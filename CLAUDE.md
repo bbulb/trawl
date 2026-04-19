@@ -97,6 +97,11 @@ trawl directory. Humans should read `README.md` first, then
     Disable via `TRAWL_FETCH_CACHE_TTL=0`; relocate via
     `TRAWL_FETCH_CACHE_PATH`; size cap via `TRAWL_FETCH_CACHE_MAX_MB`
     (default 100). `PipelineResult.cache_hit` flags the reuse.
+  - **Per-host adaptive ceiling** (C9, default on) — Playwright's
+    content-ready wait ceiling becomes `p95(host) × 1.5` once 5
+    observations accumulate, clamped to `[1500, 15000] ms`. New hosts
+    use the static 5000 ms default. Stats in
+    `~/.cache/trawl/host_stats.json`. Disable via `TRAWL_HOST_STATS=0`.
 
 ## Quick Reference
 
@@ -253,7 +258,8 @@ change them, run `tests/test_pipeline.py` before AND after.
 | `chunking.MIN_PLAIN_CHARS` | `20` | Smaller → keeps noise; larger → drops useful short chunks |
 | `retrieval.EMBEDDING_BATCH` | `64` | Requires llama-server `--ubatch-size ≥ 2048` |
 | `retrieval.MAX_EMBED_INPUT_CHARS` | `1800` | Safety net for the same ubatch ceiling |
-| `fetchers/playwright.py wait_for_ms` | `5000` | Ceiling (not fixed wait) for the content-ready detector. Fast pages exit sub-2s; SPAs that never stabilize fall back to this ceiling. Change requires re-running the parity matrix. |
+| `fetchers/playwright.py wait_for_ms` | `5000` | Fallback ceiling (not fixed wait) for the content-ready detector on brand-new hosts. C9's `host_stats` takes over once a host has ≥ 5 observations, replacing this with `p95 × 1.5` clamped to `[1500, 15000] ms`. Set `TRAWL_HOST_STATS=0` to revert to the static 5000 ms. Change requires re-running the parity matrix. |
+| `host_stats.py` (WINDOW_SIZE, MIN_OBSERVATIONS, CEILING_MULTIPLIER, MIN_CEILING_MS, MAX_CEILING_MS) | `50, 5, 1.5, 1500, 15000` | Per-host adaptive ceiling bounds. Not env-configurable — retuning should go through a data-driven spike and a CHANGELOG entry. |
 | `fetchers/playwright.py NETWORKIDLE_BUDGET_MS` | `3000` | Max time to wait for `networkidle` before falling back to `domcontentloaded`. Discourse/chat SPAs hold websockets so networkidle never fires — short budget + content-ready detector gives same HTML much faster (telemetry: NVIDIA forum 17s → 4.4s). Raising it re-introduces the regression. |
 | `fetchers/playwright.py` content-ready predicate | `stableTicks >= 4`, `polling=150ms`, `len > 100`, placeholder regex | Empirically tuned on the parity matrix for a 67% avg fetch_ms reduction. Tightening the window or raising `len` can regress fast/short pages. |
 | `extraction.py` three-way max (precise, recall, bs) | order matters | Pricing pages need BS; articles need precise |

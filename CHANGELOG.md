@@ -9,6 +9,29 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Added
 
+- **C9 — Per-host adaptive content-ready ceiling.** New module
+  `src/trawl/host_stats.py` tracks the last 50 Playwright fetch
+  durations per hostname. `fetchers/playwright.fetch()` and
+  `render_session()` now consult `host_stats.ceiling_ms(url,
+  default=wait_for_ms)` before opening a context; after 5
+  observations the wait ceiling switches from the static 5000 ms
+  default to `p95 × 1.5`, clamped to `[1500, 15000] ms`. Observations
+  below `MIN_OBSERVATIONS` fall back to the caller-provided default,
+  so new installs behave identically until a host warms up.
+    * On-disk JSON at `~/.cache/trawl/host_stats.json` (atomic
+      rewrite, corrupt/schema-mismatch recovery).
+    * Observations above `MAX_CEILING_MS × 2` or below zero are
+      discarded as sanity checks.
+    * New env vars `TRAWL_HOST_STATS` (default `1`, set `0` to
+      disable recording and fall back to the static ceiling) and
+      `TRAWL_HOST_STATS_PATH` (default
+      `~/.cache/trawl/host_stats.json`).
+    * `render_session()` consults ceilings but doesn't record —
+      caller holds the session arbitrarily long.
+    * 21 unit tests in `tests/test_host_stats.py` cover warm-up
+      threshold, bounds, rolling-window eviction, sanity filter,
+      corrupt-file recovery, and env disable.
+  Spec: `docs/superpowers/specs/2026-04-20-c9-per-host-ceiling-design.md`.
 - **C8 — Per-fetch result cache.** New module `src/trawl/fetch_cache.py`
   caches successful HTML/PDF fetches to
   `~/.cache/trawl/fetches/<sha256>.json` keyed by URL. Subsequent fetches
