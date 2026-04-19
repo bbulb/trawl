@@ -188,6 +188,7 @@ src/trawl_mcp/                   MCP server wrapper (stdio default, --http opt-i
   __main__.py                    `python -m trawl_mcp [--http [HOST:PORT]]`
 
 tests/
+  test_cases.yaml                12 golden cases (extraction-quality parity)
   test_cases.yaml                15 golden cases (extraction-quality parity)
   test_pipeline.py               parity runner — compares against ground truth
   test_agent_patterns.py         agent workflow harness (single/repeat/host-transfer/compositional)

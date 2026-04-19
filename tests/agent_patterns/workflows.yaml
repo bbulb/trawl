@@ -1,0 +1,261 @@
+# shard: workflows — multi-operation 패턴.
+#
+# repeat_visits / host_transfer / passthrough / compositional / error_handling /
+# large_page 카테고리. 단일 fetch 패턴은 다른 shard에 분리, 여기는 여러
+# operation을 stack 한 시나리오만.
+#
+# `ref: <step_idx>` 로 이전 step의 url/query 재사용 (MVP — dynamic capture
+# 같은 동적 substitution은 후속 PR에서). 의존하는 trawl 기능:
+#
+#   - PR #7 scaffold (multi-op runner, ref 지원)
+#   - PR #8 C7 (passthrough_pdf 시나리오)
+#   - PR #9 C16 (compositional 패턴이 outbound_links 검증 시 필요)
+#
+# C16의 outbound_links 검증은 future C16-extended assertion key가 필요
+# (현재 schema에는 outbound_links contains 같은 키가 없음). 이번 PR에서는
+# compositional 패턴을 정의만 해두고 assertion은 chunks_contain_any 등
+# 기존 키 위주로 작성. C16 검증 키 추가는 후속 small PR 권장.
+
+patterns:
+  # ============================================================
+  # repeat_visits (3) — profile 자동 제안 + fast path
+  # ============================================================
+
+  - id: openclaw_dashboard_warm_profile_naver_finance
+    primary_agent: [openclaw]
+    category: repeat_visits
+    description: "네이버 금융 시가총액 페이지 3회 visit → suggest_profile → profile_page → fast"
+    live: required
+    steps:
+      - op: fetch_page
+        url: "https://finance.naver.com/sise/sise_market_sum.naver"
+        query: "코스피 시가총액 상위 종목"
+        assertions:
+          suggest_profile: false
+          error_is_none: true
+      - op: fetch_page
+        ref: 0
+        assertions:
+          suggest_profile: false
+          error_is_none: true
+      - op: fetch_page
+        ref: 0
+        assertions:
+          suggest_profile: true
+          error_is_none: true
+      - op: profile_page
+        ref: 0
+      - op: fetch_page
+        ref: 0
+        assertions:
+          profile_used: true
+          error_is_none: true
+        budgets:
+          total_ms_p95: 6000
+
+  - id: hermes_dashboard_warm_profile_hn_front
+    primary_agent: [hermes]
+    category: repeat_visits
+    description: "Hacker News front page warm-profile 시나리오"
+    live: required
+    steps:
+      - op: fetch_page
+        url: "https://news.ycombinator.com/"
+        query: "today's top tech stories"
+        assertions:
+          suggest_profile: false
+      - op: fetch_page
+        ref: 0
+      - op: fetch_page
+        ref: 0
+        assertions:
+          suggest_profile: true
+      - op: profile_page
+        ref: 0
+      - op: fetch_page
+        ref: 0
+        assertions:
+          profile_used: true
+        budgets:
+          total_ms_p95: 5000
+
+  - id: claude_code_repeated_pypi_check
+    primary_agent: [claude_code]
+    category: repeat_visits
+    description: "Claude Code가 PyPI 패키지를 같은 세션에서 3회 조회"
+    live: required
+    steps:
+      - op: fetch_page
+        url: "https://pypi.org/project/httpx/"
+        query: "httpx latest version"
+      - op: fetch_page
+        ref: 0
+      - op: fetch_page
+        ref: 0
+        assertions:
+          suggest_profile: true
+
+  # ============================================================
+  # host_transfer (2) — 한 host의 profile이 sibling URL에 transfer
+  # ============================================================
+
+  - id: openclaw_naver_finance_host_transfer
+    primary_agent: [openclaw]
+    category: host_transfer
+    description: "네이버 금융 한 종목 profile → 다른 종목 페이지에 transfer"
+    live: required
+    steps:
+      - op: profile_page
+        url: "https://finance.naver.com/item/main.naver?code=005930"   # 삼성전자
+      - op: fetch_page
+        url: "https://finance.naver.com/item/main.naver?code=000660"   # SK하이닉스
+        query: "SK하이닉스 현재가"
+        assertions:
+          profile_used: true
+          path: "profile_retrieval"
+          chunks_contain_any: ["SK하이닉스", "000660"]
+
+  - id: claude_code_pypi_host_transfer
+    primary_agent: [claude_code]
+    category: host_transfer
+    description: "PyPI 한 패키지 profile → 다른 패키지로 transfer"
+    live: required
+    steps:
+      - op: profile_page
+        url: "https://pypi.org/project/requests/"
+      - op: fetch_page
+        url: "https://pypi.org/project/aiohttp/"
+        query: "aiohttp installation"
+        assertions:
+          profile_used: true
+          chunks_contain_any: ["aiohttp"]
+
+  # ============================================================
+  # passthrough (2) — JSON/RSS URL은 query 없이도 동작
+  # ============================================================
+
+  - id: hermes_passthrough_hn_front_api
+    primary_agent: [hermes]
+    category: passthrough
+    description: "HN Algolia API — JSON 직접 반환 (query 없이)"
+    url: "https://hn.algolia.com/api/v1/search?tags=front_page"
+    live: required
+    assertions:
+      fetcher_used: "passthrough"
+      content_type: "application/json"
+      n_chunks_returned: ">= 1"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 8000
+
+  - id: hermes_passthrough_rss_hn
+    primary_agent: [hermes]
+    category: passthrough
+    description: "HN RSS feed — XML 직접 반환"
+    url: "https://news.ycombinator.com/rss"
+    live: required
+    assertions:
+      fetcher_used: "passthrough"
+      n_chunks_returned: ">= 1"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 8000
+
+  # ============================================================
+  # compositional (2) — 한 fetch 결과를 보고 다음 fetch 결정 (agent 측)
+  # ============================================================
+
+  - id: hermes_arxiv_to_followup_search
+    primary_agent: [hermes]
+    category: compositional
+    description: "arXiv abs 조회 → outbound_links/page_entities로 follow-up search 가능 (C16 enriched payload 활용)"
+    live: required
+    steps:
+      - op: fetch_page
+        url: "https://arxiv.org/abs/2402.03216"   # BGE-M3
+        query: "BGE-M3 main contribution and benchmarks"
+        assertions:
+          chunks_contain_any: ["BGE-M3", "embedding", "multilingual"]
+          error_is_none: true
+      - op: fetch_page
+        url: "https://duckduckgo.com/html/?q=BGE-M3+benchmark+evaluation"
+        query: "BGE-M3 benchmark evaluation"
+        assertions:
+          chunks_contain_any: ["BGE-M3"]
+
+  - id: claude_code_github_repo_to_issues
+    primary_agent: [claude_code]
+    category: compositional
+    description: "GitHub repo → outbound_links 보고 issues 페이지로"
+    live: required
+    steps:
+      - op: fetch_page
+        url: "https://github.com/anthropics/anthropic-sdk-python"
+        query: "anthropic sdk python overview"
+        assertions:
+          n_chunks_returned: ">= 3"
+      - op: fetch_page
+        url: "https://github.com/anthropics/anthropic-sdk-python/issues"
+        query: "open issues in anthropic sdk"
+        assertions:
+          chunks_contain_any: ["issue", "Issue"]
+
+  # ============================================================
+  # error_handling (3) — graceful 실패
+  # ============================================================
+
+  - id: hermes_error_dead_url_404
+    primary_agent: [hermes]
+    category: error_handling
+    description: "404 페이지 — 크래시 없이 chunks=[], error 채움"
+    url: "https://example.com/this-path-definitely-does-not-exist-12345"
+    query: "anything"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 0"
+    budgets:
+      total_ms_p95: 18000
+
+  - id: hermes_error_unreachable_host
+    primary_agent: [hermes]
+    category: error_handling
+    description: "DNS 해소 실패 — 즉시 error_result 반환"
+    url: "https://nonexistent-host-xyzabc.invalid/whatever"
+    query: "anything"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 0"
+    budgets:
+      total_ms_p95: 30000     # DNS 타임아웃 여유
+
+  - id: hermes_error_paywall_chunks_grace
+    primary_agent: [hermes]
+    category: error_handling
+    description: "NYT 같은 paywall — login 페이지 chunks 반환되지만 크래시 없음"
+    url: "https://www.nytimes.com/2024/01/01/world/example-paywalled-article.html"
+    query: "what is this article about"
+    live: optional
+    assertions:
+      n_chunks_returned: ">= 0"
+    budgets:
+      total_ms_p95: 18000
+
+  # ============================================================
+  # large_page (1) — 200+ chunk 페이지, token budget 보존
+  # ============================================================
+
+  - id: claude_code_large_wikipedia_article
+    primary_agent: [claude_code]
+    category: large_page
+    description: "긴 Wikipedia 기사 — 한국 역사 (이순신은 짧으니 더 큰 article)"
+    url: "https://en.wikipedia.org/wiki/Korean_War"
+    query: "key events of the Korean War"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      fetcher_used: "wikipedia"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 12000
+      n_chunks_max: 12         # adaptive_k 상한 검증
+      output_chars_max: 8000   # token budget cap
