@@ -130,6 +130,12 @@ def test_chain_hints_has_key_rejects_list():
 def test_excerpts_min_count_passes_when_enough():
     fails = _evaluate_assertions(
         {"excerpts_min_count": ">= 2"},
+        {
+            "excerpts": [
+                {"chunk_idx": 0, "summary_120c": "a"},
+                {"chunk_idx": 1, "summary_120c": "b"},
+            ]
+        },
         {"excerpts": [{"chunk_idx": 0, "summary_120c": "a"},
                       {"chunk_idx": 1, "summary_120c": "b"}]},
     )
@@ -160,6 +166,15 @@ def test_excerpts_min_count_int_passes_when_equal():
 def test_outbound_links_contain_any_passes_on_url_match():
     fails = _evaluate_assertions(
         {"outbound_links_contain_any": ["arxiv.org"]},
+        {
+            "outbound_links": [
+                {
+                    "url": "https://arxiv.org/pdf/2402.03216",
+                    "anchor_text": "PDF",
+                    "in_chunk_idx": 0,
+                },
+            ]
+        },
         {"outbound_links": [
             {"url": "https://arxiv.org/pdf/2402.03216", "anchor_text": "PDF",
              "in_chunk_idx": 0},
@@ -171,6 +186,15 @@ def test_outbound_links_contain_any_passes_on_url_match():
 def test_outbound_links_contain_any_passes_on_anchor_match():
     fails = _evaluate_assertions(
         {"outbound_links_contain_any": ["whitepaper"]},
+        {
+            "outbound_links": [
+                {
+                    "url": "https://example.com/p.pdf",
+                    "anchor_text": "Download whitepaper",
+                    "in_chunk_idx": 0,
+                },
+            ]
+        },
         {"outbound_links": [
             {"url": "https://example.com/p.pdf",
              "anchor_text": "Download whitepaper",
@@ -183,6 +207,11 @@ def test_outbound_links_contain_any_passes_on_anchor_match():
 def test_outbound_links_contain_any_fails_when_missing():
     fails = _evaluate_assertions(
         {"outbound_links_contain_any": ["wikipedia"]},
+        {
+            "outbound_links": [
+                {"url": "https://arxiv.org/pdf/x", "anchor_text": "PDF", "in_chunk_idx": 0},
+            ]
+        },
         {"outbound_links": [
             {"url": "https://arxiv.org/pdf/x", "anchor_text": "PDF",
              "in_chunk_idx": 0},
@@ -226,6 +255,12 @@ def test_page_entities_contain_any_fails_when_missing():
 def test_chain_hints_has_key_passes_when_present():
     fails = _evaluate_assertions(
         {"chain_hints_has_key": "pdf_template"},
+        {
+            "chain_hints": {
+                "pdf_template": "https://arxiv.org/pdf/{id}",
+                "recommended_followup_filter": "site:arxiv.org",
+            }
+        },
         {"chain_hints": {"pdf_template": "https://arxiv.org/pdf/{id}",
                          "recommended_followup_filter": "site:arxiv.org"}},
     )

@@ -61,6 +61,9 @@ _KO_NP_RE = re.compile(r"[\uAC00-\uD7AF]{2,}")
 # Excerpts ---------------------------------------------------------
 
 
+def extract_excerpts(
+    scored_chunks: list, *, top_n: int = EXCERPTS_TOP_N, max_chars: int = EXCERPT_MAX_CHARS
+) -> list[dict]:
 def extract_excerpts(scored_chunks: list, *, top_n: int = EXCERPTS_TOP_N,
                      max_chars: int = EXCERPT_MAX_CHARS) -> list[dict]:
     """Top-N chunks → [{chunk_idx, summary_120c}].
@@ -121,6 +124,9 @@ def _first_sentence(md: str, cap: int) -> str:
 # Outbound links ---------------------------------------------------
 
 
+def extract_outbound_links(
+    chunks: list, *, cap: int = OUTBOUND_LINKS_MAX, bytes_cap: int = OUTBOUND_LINKS_MAX_BYTES
+) -> list[dict]:
 def extract_outbound_links(chunks: list, *, cap: int = OUTBOUND_LINKS_MAX,
                            bytes_cap: int = OUTBOUND_LINKS_MAX_BYTES) -> list[dict]:
     """Walk top-k chunks for markdown `[text](url)` patterns.
@@ -165,6 +171,9 @@ def extract_outbound_links(chunks: list, *, cap: int = OUTBOUND_LINKS_MAX,
 # Page entities ----------------------------------------------------
 
 
+def extract_page_entities(
+    page_title: str, heading_paths: list[list[str]], *, cap: int = PAGE_ENTITIES_MAX
+) -> list[str]:
 def extract_page_entities(page_title: str, heading_paths: list[list[str]],
                           *, cap: int = PAGE_ENTITIES_MAX) -> list[str]:
     """Surface noun-phrase candidates from title + chunk heading_paths.

@@ -62,6 +62,7 @@ from agent_patterns import (  # noqa: E402  (sys.path tweak above)
     load_shard,
 )
 from agent_patterns.schema import evaluate_comparison  # noqa: E402
+
 REGRESSION_TOLERANCE = 1.20  # +20% over baseline counts as regression
 
 
@@ -93,6 +94,7 @@ class PatternOutcome:
     def passed(self) -> bool:
         if self.error:
             return False
+        return all(not s.assertion_failures and not s.budget_failures for s in self.steps)
         return all(
             not s.assertion_failures and not s.budget_failures
             for s in self.steps
@@ -185,6 +187,7 @@ def _evaluate_assertions(
     """Return a list of human-readable failure messages (empty = all pass)."""
     fails: list[str] = []
     chunks = measurements.get("chunks") or []
+    blob = "\n\n".join(((c.get("heading") or "") + "\n" + (c.get("text") or "")) for c in chunks)
     blob = "\n\n".join(
         ((c.get("heading") or "") + "\n" + (c.get("text") or ""))
         for c in chunks
@@ -246,6 +249,7 @@ def _evaluate_assertions(
         elif key == "outbound_links_contain_any":
             links = measurements.get("outbound_links") or []
             haystack = "\n".join(
+                (lk.get("url") or "") + "\n" + (lk.get("anchor_text") or "") for lk in links
                 (lk.get("url") or "") + "\n" + (lk.get("anchor_text") or "")
                 for lk in links
             )
@@ -265,6 +269,7 @@ def _evaluate_assertions(
         elif key == "chain_hints_has_key":
             hints = measurements.get("chain_hints") or {}
             if expected not in hints:
+                fails.append(f"chain_hints_has_key: {expected!r} not in keys {sorted(hints)!r}")
                 fails.append(
                     f"chain_hints_has_key: {expected!r} not in keys {sorted(hints)!r}"
                 )
@@ -338,6 +343,16 @@ def _run_pattern(
             measurements: dict[str, Any] = {}
             elapsed_samples: list[int] = []
             for _ in range(repeats):
+                measurements, elapsed = _run_operation(step.op, url, query, dry_run=dry_run)
+                elapsed_samples.append(elapsed)
+
+            elapsed_p95 = int(_p95(elapsed_samples)) if elapsed_samples else 0
+
+            assertion_failures = (
+                _evaluate_assertions(step.assertions, measurements) if not dry_run else []
+            )
+            budget_failures = (
+                _evaluate_budgets(step.budgets, measurements, elapsed_p95) if not dry_run else []
                 measurements, elapsed = _run_operation(
                     step.op, url, query, dry_run=dry_run
                 )
@@ -466,6 +481,7 @@ def _render_summary(outcomes: list[PatternOutcome]) -> str:
         lines.append("|---|---|---|---|")
         for o in items:
             status = "PASS" if o.passed else "FAIL"
+            lines.append(f"| `{o.id}` | {o.category} | {status} | {o.total_ms_p95}ms |")
             lines.append(
                 f"| `{o.id}` | {o.category} | {status} | {o.total_ms_p95}ms |"
             )
@@ -474,6 +490,7 @@ def _render_summary(outcomes: list[PatternOutcome]) -> str:
 
 
 def _render_failure(o: PatternOutcome) -> str:
+    lines = [f"# {o.id} — FAIL", "", f"- shard: `{o.shard}`", f"- category: `{o.category}`", ""]
     lines = [f"# {o.id} — FAIL", "", f"- shard: `{o.shard}`",
              f"- category: `{o.category}`", ""]
     if o.error:
@@ -481,6 +498,13 @@ def _render_failure(o: PatternOutcome) -> str:
     for i, step in enumerate(o.steps):
         if not (step.assertion_failures or step.budget_failures):
             continue
+        lines += [
+            f"## step {i} — {step.op}",
+            "",
+            f"- url: `{step.url}`",
+            f"- query: `{step.query}`",
+            "",
+        ]
         lines += [f"## step {i} — {step.op}", "",
                   f"- url: `{step.url}`", f"- query: `{step.query}`", ""]
         for f in step.assertion_failures:
@@ -513,6 +537,7 @@ def _write_baseline(outcomes: list[PatternOutcome]) -> None:
         for o in outcomes
         if o.passed and o.total_ms_p95 > 0
     }
+    BASELINE_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     BASELINE_PATH.write_text(
         json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
     )
@@ -552,6 +577,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--category")
     p.add_argument("--primary-agent")
     p.add_argument("--limit", type=int)
+    p.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        help="repeat each measurement N times for p95 (live mode only)",
+    )
+    p.add_argument(
+        "--dry-run", action="store_true", help="schema validation + filter, no live fetches"
+    )
+    p.add_argument(
+        "--baseline", action="store_true", help="write current p95 measurements as new baseline"
+    )
+    p.add_argument(
+        "--regression",
+        action="store_true",
+        help="fail if any pattern's p95 exceeds baseline + 20%%",
+    )
     p.add_argument("--repeats", type=int, default=1,
                    help="repeat each measurement N times for p95 (live mode only)")
     p.add_argument("--dry-run", action="store_true",
@@ -596,6 +638,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     outcomes = [
+        _run_pattern(p, dry_run=False, repeats=args.repeats, verbose=args.verbose) for p in selected
         _run_pattern(p, dry_run=False, repeats=args.repeats, verbose=args.verbose)
         for p in selected
     ]

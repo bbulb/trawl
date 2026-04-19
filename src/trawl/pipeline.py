@@ -925,6 +925,10 @@ def _run_full_pipeline(
         structured_path=False,
         hyde_used=use_hyde,
         hyde_text=hyde_text,
+        chunks=[
+            _chunk_to_dict(c, score=s.score)
+            for c, s in zip(emitted_chunks, final_scored, strict=True)
+        ],
         chunks=[_chunk_to_dict(c, score=s.score) for c, s in zip(emitted_chunks, final_scored, strict=True)],
         excerpts=enrichment.extract_excerpts(emitted_chunks),
         outbound_links=enrichment.extract_outbound_links(emitted_chunks),
