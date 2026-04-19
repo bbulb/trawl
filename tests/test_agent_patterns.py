@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import statistics
 import sys
@@ -94,6 +95,10 @@ class PatternOutcome:
         if self.error:
             return False
         return all(not s.assertion_failures and not s.budget_failures for s in self.steps)
+        return all(
+            not s.assertion_failures and not s.budget_failures
+            for s in self.steps
+        )
 
 
 # Filtering -----------------------------------------------------------
@@ -183,6 +188,10 @@ def _evaluate_assertions(
     fails: list[str] = []
     chunks = measurements.get("chunks") or []
     blob = "\n\n".join(((c.get("heading") or "") + "\n" + (c.get("text") or "")) for c in chunks)
+    blob = "\n\n".join(
+        ((c.get("heading") or "") + "\n" + (c.get("text") or ""))
+        for c in chunks
+    )
 
     for key, expected in assertions.items():
         if key == "chunks_contain_all":
@@ -241,6 +250,8 @@ def _evaluate_assertions(
             links = measurements.get("outbound_links") or []
             haystack = "\n".join(
                 (lk.get("url") or "") + "\n" + (lk.get("anchor_text") or "") for lk in links
+                (lk.get("url") or "") + "\n" + (lk.get("anchor_text") or "")
+                for lk in links
             )
             if not any(s in haystack for s in expected):
                 fails.append(
@@ -263,6 +274,9 @@ def _evaluate_assertions(
             actual = bool(measurements.get("cache_hit"))
             if actual is not bool(expected):
                 fails.append(f"cache_hit: expected {expected}, got {actual}")
+                fails.append(
+                    f"chain_hints_has_key: {expected!r} not in keys {sorted(hints)!r}"
+                )
     return fails
 
 
@@ -343,6 +357,22 @@ def _run_pattern(
             )
             budget_failures = (
                 _evaluate_budgets(step.budgets, measurements, elapsed_p95) if not dry_run else []
+                measurements, elapsed = _run_operation(
+                    step.op, url, query, dry_run=dry_run
+                )
+                elapsed_samples.append(elapsed)
+
+            elapsed_p95 = (
+                int(_p95(elapsed_samples)) if elapsed_samples else 0
+            )
+
+            assertion_failures = (
+                _evaluate_assertions(step.assertions, measurements)
+                if not dry_run else []
+            )
+            budget_failures = (
+                _evaluate_budgets(step.budgets, measurements, elapsed_p95)
+                if not dry_run else []
             )
 
             outcome.steps.append(
@@ -456,12 +486,17 @@ def _render_summary(outcomes: list[PatternOutcome]) -> str:
         for o in items:
             status = "PASS" if o.passed else "FAIL"
             lines.append(f"| `{o.id}` | {o.category} | {status} | {o.total_ms_p95}ms |")
+            lines.append(
+                f"| `{o.id}` | {o.category} | {status} | {o.total_ms_p95}ms |"
+            )
         lines.append("")
     return "\n".join(lines)
 
 
 def _render_failure(o: PatternOutcome) -> str:
     lines = [f"# {o.id} — FAIL", "", f"- shard: `{o.shard}`", f"- category: `{o.category}`", ""]
+    lines = [f"# {o.id} — FAIL", "", f"- shard: `{o.shard}`",
+             f"- category: `{o.category}`", ""]
     if o.error:
         lines += ["## error", "", "```", o.error, "```", ""]
     for i, step in enumerate(o.steps):
@@ -474,6 +509,8 @@ def _render_failure(o: PatternOutcome) -> str:
             f"- query: `{step.query}`",
             "",
         ]
+        lines += [f"## step {i} — {step.op}", "",
+                  f"- url: `{step.url}`", f"- query: `{step.query}`", ""]
         for f in step.assertion_failures:
             lines.append(f"- assertion: {f}")
         for f in step.budget_failures:
@@ -505,6 +542,9 @@ def _write_baseline(outcomes: list[PatternOutcome]) -> None:
         if o.passed and o.total_ms_p95 > 0
     }
     BASELINE_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    BASELINE_PATH.write_text(
+        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+    )
     print(f"baseline written: {BASELINE_PATH} ({len(payload)} entries)")
 
 
@@ -558,6 +598,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="fail if any pattern's p95 exceeds baseline + 20%%",
     )
+    p.add_argument("--repeats", type=int, default=1,
+                   help="repeat each measurement N times for p95 (live mode only)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="schema validation + filter, no live fetches")
+    p.add_argument("--baseline", action="store_true",
+                   help="write current p95 measurements as new baseline")
+    p.add_argument("--regression", action="store_true",
+                   help="fail if any pattern's p95 exceeds baseline + 20%%")
     p.add_argument("--verbose", "-v", action="store_true")
     return p.parse_args(argv)
 
@@ -595,6 +643,8 @@ def main(argv: list[str] | None = None) -> int:
 
     outcomes = [
         _run_pattern(p, dry_run=False, repeats=args.repeats, verbose=args.verbose) for p in selected
+        _run_pattern(p, dry_run=False, repeats=args.repeats, verbose=args.verbose)
+        for p in selected
     ]
     for o in outcomes:
         _print_pattern_summary(o, verbose=args.verbose)
