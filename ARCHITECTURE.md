@@ -345,11 +345,13 @@ Ordered by expected value-per-hour:
 1. **Real-usage feedback loop**. Collect a week of actual queries
    from downstream integrations; identify regression cases the
    12-case matrix misses.
-2. **Per-domain adaptive timeout** on top of the content-ready detector.
-   `wait_for_ms=5000` is now the ceiling for content-ready stability
-   detection (not a fixed wait — see `_wait_for_content_ready` in
-   `fetchers/playwright.py`). A per-domain override could push the
-   ceiling lower for known-fast hosts and higher for known-slow ones.
+~~2. **Per-domain adaptive timeout**~~ — **Done (C9, 2026-04-20).**
+   `src/trawl/host_stats.py` tracks the last 50 Playwright fetch
+   durations per hostname. After 5 observations the `fetch()` /
+   `render_session()` wait ceiling switches from the static 5000 ms
+   default to `p95 × 1.5`, clamped to `[1500, 15000] ms`. Disable with
+   `TRAWL_HOST_STATS=0`. Spec:
+   `docs/superpowers/specs/2026-04-20-c9-per-host-ceiling-design.md`.
 3. **BM25 hybrid retrieval** for code/technical queries. Would need
    a separate index and a way to detect when the query is
    code-shaped; probably more effort than it's worth unless we

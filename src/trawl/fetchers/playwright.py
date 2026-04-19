@@ -34,6 +34,8 @@ from playwright.sync_api import (
 )
 from playwright_stealth import Stealth
 
+from .. import host_stats
+
 
 @dataclass
 class FetchResult:
@@ -258,24 +260,32 @@ def fetch(
     page-load ceiling. `profile_selector` — when provided — is used by
     the content-ready detector to verify the main content region holds
     non-placeholder text.
+
+    The `wait_for_ms` caller default is refined through
+    ``host_stats.ceiling_ms`` so repeat visits to the same host
+    converge on that host's observed p95 rather than the static
+    5000 ms budget. See C9 spec.
     """
+    effective_wait_ms = host_stats.ceiling_ms(url, default=wait_for_ms)
     t0 = time.monotonic()
     with _lock:
         try:
             with _open_context(
                 url,
-                wait_for_ms=wait_for_ms,
+                wait_for_ms=effective_wait_ms,
                 timeout_s=timeout_s,
                 user_agent=user_agent,
                 profile_selector=profile_selector,
             ) as (_ctx, _page, html, content_type):
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                host_stats.record(url, elapsed_ms)
                 return FetchResult(
                     url=url,
                     html=html,
                     markdown="",
                     raw_html=html,
                     fetcher="playwright",
-                    elapsed_ms=int((time.monotonic() - t0) * 1000),
+                    elapsed_ms=elapsed_ms,
                     content_type=content_type,
                 )
         except PlaywrightTimeoutError as e:
@@ -320,12 +330,18 @@ def render_session(
     `profile_selector` — when provided — lets the content-ready wait
     verify the main content region has non-placeholder text before the
     session yields.
+
+    Like `fetch()`, the wait ceiling is refined through
+    ``host_stats.ceiling_ms``. Session runtime isn't recorded back into
+    host_stats — the caller holds the session arbitrarily long, so the
+    elapsed time would be a poor signal of host responsiveness.
     """
+    effective_wait_ms = host_stats.ceiling_ms(url, default=wait_for_ms)
     t0 = time.monotonic()
     with _lock:
         with _open_context(
             url,
-            wait_for_ms=wait_for_ms,
+            wait_for_ms=effective_wait_ms,
             timeout_s=timeout_s,
             user_agent=user_agent,
             profile_selector=profile_selector,
