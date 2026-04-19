@@ -285,12 +285,6 @@ def _check_assertion_shape(key: str, value: Any, _err) -> None:
         if isinstance(value, str):
             _parse_comparison(value, _err, key=key)
     elif key in {"profile_used", "error_is_none", "suggest_profile", "truncated", "cache_hit"}:
-            raise _err(
-                f"assertion {key!r}: must be int or comparison string like '>= 3'"
-            )
-        if isinstance(value, str):
-            _parse_comparison(value, _err, key=key)
-    elif key in {"profile_used", "error_is_none", "suggest_profile", "truncated"}:
         if not isinstance(value, bool):
             raise _err(f"assertion {key!r}: must be bool")
     elif key in {"path", "fetcher_used", "content_type", "error_contains"}:
@@ -299,9 +293,6 @@ def _check_assertion_shape(key: str, value: Any, _err) -> None:
     elif key == "excerpts_min_count":
         if not isinstance(value, (int, str)):
             raise _err(f"assertion {key!r}: must be int or comparison string like '>= 2'")
-            raise _err(
-                f"assertion {key!r}: must be int or comparison string like '>= 2'"
-            )
         if isinstance(value, str):
             _parse_comparison(value, _err, key=key)
         elif value < 0:
@@ -349,17 +340,6 @@ def _parse_comparison(spec: str, _err, *, key: str) -> tuple[str, int]:
                 raise _err(f"{key!r}: comparison threshold not an integer: {spec!r}") from e
             return op, threshold
     raise _err(f"{key!r}: comparison must start with one of >= <= == != > <, got {spec!r}")
-            rest = spec[len(op):].strip()
-            try:
-                threshold = int(rest)
-            except ValueError as e:
-                raise _err(
-                    f"{key!r}: comparison threshold not an integer: {spec!r}"
-                ) from e
-            return op, threshold
-    raise _err(
-        f"{key!r}: comparison must start with one of >= <= == != > <, got {spec!r}"
-    )
 
 
 def evaluate_comparison(spec: str | int, actual: int) -> bool:

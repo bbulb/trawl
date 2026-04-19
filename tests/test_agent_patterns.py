@@ -357,22 +357,6 @@ def _run_pattern(
             )
             budget_failures = (
                 _evaluate_budgets(step.budgets, measurements, elapsed_p95) if not dry_run else []
-                measurements, elapsed = _run_operation(
-                    step.op, url, query, dry_run=dry_run
-                )
-                elapsed_samples.append(elapsed)
-
-            elapsed_p95 = (
-                int(_p95(elapsed_samples)) if elapsed_samples else 0
-            )
-
-            assertion_failures = (
-                _evaluate_assertions(step.assertions, measurements)
-                if not dry_run else []
-            )
-            budget_failures = (
-                _evaluate_budgets(step.budgets, measurements, elapsed_p95)
-                if not dry_run else []
             )
 
             outcome.steps.append(
@@ -642,7 +626,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     outcomes = [
-        _run_pattern(p, dry_run=False, repeats=args.repeats, verbose=args.verbose) for p in selected
         _run_pattern(p, dry_run=False, repeats=args.repeats, verbose=args.verbose)
         for p in selected
     ]
