@@ -63,6 +63,8 @@ ASSERTION_KEYS = {
     "outbound_links_contain_any",
     "page_entities_contain_any",
     "chain_hints_has_key",
+    # C8 per-fetch cache hit — bool flag mirroring PipelineResult.cache_hit.
+    "cache_hit",
 }
 
 BUDGET_KEYS = {
@@ -280,6 +282,9 @@ def _check_assertion_shape(key: str, value: Any, _err) -> None:
     elif key == "n_chunks_returned":
         if not isinstance(value, (int, str)):
             raise _err(f"assertion {key!r}: must be int or comparison string like '>= 3'")
+        if isinstance(value, str):
+            _parse_comparison(value, _err, key=key)
+    elif key in {"profile_used", "error_is_none", "suggest_profile", "truncated", "cache_hit"}:
             raise _err(
                 f"assertion {key!r}: must be int or comparison string like '>= 3'"
             )

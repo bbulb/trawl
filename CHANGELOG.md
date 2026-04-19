@@ -9,6 +9,14 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Added
 
+- **Agent-patterns assertion DSL — `cache_hit` key.** Extends the
+  `tests/agent_patterns/` whitelist with a `cache_hit: bool` key that
+  mirrors `PipelineResult.cache_hit`. Pattern authors can now assert
+  that a repeat-visit step actually served from the C8 per-fetch
+  cache. Applied to the three `workflows.yaml::repeat_visits` patterns
+  so `step 1+` require `cache_hit: true` on non-profile fetches and
+  the final profile-fast-path step requires `cache_hit: false`
+  (profile path bypasses `fetch_cache` by design).
 - **C9 — Per-host adaptive content-ready ceiling.** New module
   `src/trawl/host_stats.py` tracks the last 50 Playwright fetch
   durations per hostname. `fetchers/playwright.fetch()` and

@@ -36,11 +36,13 @@ patterns:
         assertions:
           suggest_profile: false
           error_is_none: true
+          cache_hit: true        # C8: same URL within TTL → cache hit
       - op: fetch_page
         ref: 0
         assertions:
           suggest_profile: true
           error_is_none: true
+          cache_hit: true
       - op: profile_page
         ref: 0
       - op: fetch_page
@@ -48,6 +50,7 @@ patterns:
         assertions:
           profile_used: true
           error_is_none: true
+          cache_hit: false       # profile fast path bypasses fetch_cache
         budgets:
           total_ms_p95: 6000
 
@@ -64,16 +67,20 @@ patterns:
           suggest_profile: false
       - op: fetch_page
         ref: 0
+        assertions:
+          cache_hit: true        # C8: cached from step 0
       - op: fetch_page
         ref: 0
         assertions:
           suggest_profile: true
+          cache_hit: true
       - op: profile_page
         ref: 0
       - op: fetch_page
         ref: 0
         assertions:
           profile_used: true
+          cache_hit: false       # profile fast path
         budgets:
           total_ms_p95: 5000
 
@@ -88,10 +95,13 @@ patterns:
         query: "httpx latest version"
       - op: fetch_page
         ref: 0
+        assertions:
+          cache_hit: true        # C8: second visit within TTL hits cache
       - op: fetch_page
         ref: 0
         assertions:
           suggest_profile: true
+          cache_hit: true
 
   # ============================================================
   # host_transfer (2) — 한 host의 profile이 sibling URL에 transfer

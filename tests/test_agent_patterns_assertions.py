@@ -124,6 +124,23 @@ def test_chain_hints_has_key_rejects_list():
         parse_pattern(_make_pattern({"chain_hints_has_key": ["pdf_template"]}))
 
 
+# ---------- cache_hit shape
+
+
+def test_cache_hit_key_is_whitelisted():
+    assert "cache_hit" in ASSERTION_KEYS
+
+
+def test_cache_hit_accepts_bool():
+    parse_pattern(_make_pattern({"cache_hit": True}))
+    parse_pattern(_make_pattern({"cache_hit": False}))
+
+
+def test_cache_hit_rejects_non_bool():
+    with pytest.raises(PatternValidationError, match="must be bool"):
+        parse_pattern(_make_pattern({"cache_hit": "yes"}))
+
+
 # ---------- evaluator — excerpts_min_count
 
 
@@ -281,4 +298,31 @@ def test_chain_hints_has_key_fails_on_empty_hints():
         {"chain_hints_has_key": "any_key"},
         {"chain_hints": {}},
     )
+    assert len(fails) == 1
+
+
+# ---------- evaluator — cache_hit
+
+
+def test_cache_hit_passes_when_true_matches():
+    fails = _evaluate_assertions({"cache_hit": True}, {"cache_hit": True})
+    assert fails == []
+
+
+def test_cache_hit_passes_when_false_matches():
+    fails = _evaluate_assertions({"cache_hit": False}, {"cache_hit": False})
+    assert fails == []
+
+
+def test_cache_hit_fails_on_mismatch():
+    fails = _evaluate_assertions({"cache_hit": True}, {"cache_hit": False})
+    assert len(fails) == 1
+    assert "cache_hit" in fails[0]
+
+
+def test_cache_hit_defaults_to_false_when_field_missing():
+    """Legacy PipelineResult without cache_hit reads as False."""
+    fails = _evaluate_assertions({"cache_hit": False}, {})
+    assert fails == []
+    fails = _evaluate_assertions({"cache_hit": True}, {})
     assert len(fails) == 1
