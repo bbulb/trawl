@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from .bm25 import bm25_rank, rrf_fuse
 from .chunking import Chunk
 
 DEFAULT_EMBEDDING_URL = os.environ.get("TRAWL_EMBED_URL", "http://localhost:8081/v1")
@@ -78,11 +79,18 @@ def retrieve(
     base_url: str = DEFAULT_EMBEDDING_URL,
     model: str = DEFAULT_EMBEDDING_MODEL,
     extra_query_texts: list[str] | None = None,
+    hybrid: bool = False,
 ) -> RetrievalResult:
     """Embed query + chunks, return the top-k chunks by cosine similarity.
 
     `extra_query_texts` allows passing HyDE outputs (or any extra reformulations)
     that will be averaged with the query embedding before scoring.
+
+    When `hybrid=True`, a BM25 ranking is computed over the same chunk
+    texts and fused with the dense ranking via RRF. The `score` field
+    on each returned `ScoredChunk` still holds the raw dense cosine —
+    the fused ordering only affects which chunks make the top-k, not
+    downstream consumers (telemetry, reranker) that read `score`.
     """
     if not chunks:
         return RetrievalResult(scored=[], elapsed_ms=0, embed_calls=0)
@@ -123,11 +131,16 @@ def retrieve(
     # Average query + extras into a single vector for scoring.
     avg_q = [sum(col) / len(col) for col in zip(*q_embs, strict=True)]
 
-    scored = [
-        ScoredChunk(chunk=c, score=cosine(avg_q, ce))
-        for c, ce in zip(chunks, chunk_embs, strict=True)
-    ]
-    scored.sort(key=lambda s: -s.score)
+    cosines = [cosine(avg_q, ce) for ce in chunk_embs]
+
+    if hybrid:
+        dense_ranked = sorted(range(len(chunks)), key=lambda i: -cosines[i])
+        sparse_ranked = bm25_rank(query, chunk_texts)
+        fused = rrf_fuse([dense_ranked, sparse_ranked])
+        scored = [ScoredChunk(chunk=chunks[i], score=cosines[i]) for i in fused]
+    else:
+        scored = [ScoredChunk(chunk=c, score=s) for c, s in zip(chunks, cosines, strict=True)]
+        scored.sort(key=lambda s: -s.score)
 
     return RetrievalResult(
         scored=scored[:k],

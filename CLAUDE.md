@@ -102,6 +102,15 @@ trawl directory. Humans should read `README.md` first, then
     observations accumulate, clamped to `[1500, 15000] ms`. New hosts
     use the static 5000 ms default. Stats in
     `~/.cache/trawl/host_stats.json`. Disable via `TRAWL_HOST_STATS=0`.
+  - **Hybrid dense + BM25 retrieval** (C6, **default off**, opt-in) —
+    `TRAWL_HYBRID_RETRIEVAL=1` enables BM25 lexical ranking alongside
+    dense cosine, fused via Reciprocal Rank Fusion (`k=60`). Tokenizer
+    is rule-based multilingual (Latin word / Hangul bigram / CJK char)
+    in `src/trawl/bm25.py`. Reranker window unchanged (2x candidates).
+    Baseline parity (15/15) preserved in both modes; RRF at k=60 was
+    conservative in the `code_heavy_query` A/B measurement (no content
+    regression, no assertion wins). Tune via `TRAWL_HYBRID_RRF_K`
+    (default 60). See `notes/c6-hybrid-measurement.md` for A/B results.
 
 ## Quick Reference
 
