@@ -739,7 +739,17 @@ def _run_full_pipeline(
         pt_result = _try_passthrough(url, query, t_start)
         if pt_result is not None:
             return pt_result
-        fetched, markdown, fetcher_name = _fetch_html(url)
+        # C7: HEAD probe for suffix-less PDFs (download links, redirects).
+        # Mirrors the passthrough.probe pattern: small HEAD lets us catch
+        # `application/pdf` Content-Type before paying for a Playwright
+        # render that would only return PDF viewer chrome. Probe failure
+        # is silent — fall through to the existing HTML path.
+        if pdf.probe(url):
+            fetched = pdf.fetch(url)
+            markdown = fetched.markdown
+            fetcher_name = "pdf-probed"
+        else:
+            fetched, markdown, fetcher_name = _fetch_html(url)
 
     # 1b. Playwright-path post-detection passthrough. When a suffix-less
     # URL returns JSON/XML, Chromium wraps it in a viewer DOM — so we
