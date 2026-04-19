@@ -1,0 +1,198 @@
+# shard: sports — 스포츠 정보 수집 패턴.
+#
+# 한국 주요 종목 (KBO, K-League, LCK)과 글로벌 (MLB, EPL, NBA) 양쪽
+# 커버. 일정/스코어 페이지는 records.py가 작동하는지 검증.
+
+patterns:
+  # ============================================================
+  # KBO / 야구 (4)
+  # ============================================================
+
+  - id: openclaw_naver_kbo_schedule
+    primary_agent: [openclaw, claude_code]
+    category: single_fetch
+    description: "네이버 KBO 일정 — 오늘 경기 + 시간"
+    url: "https://sports.news.naver.com/kbaseball/schedule/index"
+    query: "오늘 KBO 야구 경기 일정"
+    live: required
+    assertions:
+      chunks_contain_pattern: '\d{1,2}:\d{2}'
+      chunks_contain_any: ["두산", "LG", "SSG", "KIA", "삼성", "롯데", "한화", "NC", "KT", "키움"]
+      n_chunks_returned: ">= 2"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: openclaw_naver_kbo_record
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "네이버 KBO 팀 순위 + 승률"
+    url: "https://sports.news.naver.com/kbaseball/record/index?category=kbo"
+    query: "KBO 팀 순위와 승률"
+    live: required
+    assertions:
+      chunks_contain_any: ["승", "패", "승률"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: hermes_mlb_scoreboard
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "MLB scoreboard — today's games"
+    url: "https://www.mlb.com/scores"
+    query: "today's MLB game scores and starting times"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: hermes_mlb_standings
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "MLB standings — division leaders"
+    url: "https://www.mlb.com/standings"
+    query: "current MLB division standings"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  # ============================================================
+  # 축구 — K-League / EPL (4)
+  # ============================================================
+
+  - id: openclaw_kleague_table
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "K League 1 순위표"
+    url: "https://www.kleague.com/standings/league.do?leagueId=1"
+    query: "K리그 1 현재 순위"
+    live: optional
+    assertions:
+      n_chunks_returned: ">= 1"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 18000
+
+  - id: hermes_premierleague_table
+    primary_agent: [hermes, claude_code]
+    category: single_fetch
+    description: "EPL standings — Premier League official"
+    url: "https://www.premierleague.com/tables"
+    query: "current Premier League table"
+    live: required
+    assertions:
+      chunks_contain_any: ["Liverpool", "Arsenal", "Manchester", "Tottenham", "Chelsea"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 18000
+
+  - id: hermes_premierleague_fixtures
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "EPL fixtures — upcoming match list"
+    url: "https://www.premierleague.com/fixtures"
+    query: "upcoming Premier League fixtures this week"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 18000
+
+  - id: openclaw_naver_football_world
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "네이버 스포츠 해외축구 메인"
+    url: "https://sports.news.naver.com/wfootball/index"
+    query: "오늘 해외 축구 주요 경기"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  # ============================================================
+  # 농구 (2)
+  # ============================================================
+
+  - id: hermes_nba_scores
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "NBA scoreboard — today's games"
+    url: "https://www.nba.com/scores"
+    query: "tonight's NBA games"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 2"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 18000
+
+  - id: hermes_nba_standings
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "NBA standings — east + west conference"
+    url: "https://www.nba.com/standings"
+    query: "current NBA conference standings"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 18000
+
+  # ============================================================
+  # E-스포츠 (2)
+  # ============================================================
+
+  - id: openclaw_lck_schedule
+    primary_agent: [openclaw, claude_code]
+    category: single_fetch
+    description: "LCK 공식 일정 — 리그 오브 레전드 한국"
+    url: "https://lolesports.com/schedule?leagues=lck"
+    query: "오늘 LCK 경기 일정"
+    live: optional       # SPA 렌더링 무거움
+    assertions:
+      n_chunks_returned: ">= 1"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 22000
+
+  - id: openclaw_opgg_summoner
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "OP.GG — 임의의 유명 소환사 페이지 (Faker)"
+    url: "https://www.op.gg/summoners/kr/Hide%20on%20bush-KR1"
+    query: "Faker 최근 게임 전적"
+    live: optional
+    assertions:
+      n_chunks_returned: ">= 1"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 22000
+
+  # ============================================================
+  # 종합 / 라이브 스코어 (1)
+  # ============================================================
+
+  - id: hermes_espn_scoreboard
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "ESPN scoreboard — multi-sport main"
+    url: "https://www.espn.com/scoreboard"
+    query: "today's live scores across major sports"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 18000

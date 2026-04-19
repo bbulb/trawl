@@ -1,0 +1,224 @@
+# shard: finance — 경제·주식·암호화폐 정보 수집 패턴.
+#
+# 한국 주식 데이터는 네이버/한경/매경, 글로벌은 Yahoo Finance/Reuters
+# Markets/Investing.com 위주. 일부 ticker 페이지는 records.py가 작동
+# (반복 카드/표 구조)하는지도 검증한다. 가격 데이터의 시점 의존성을
+# 피하기 위해 assertions은 "ticker 식별 정보가 있는지" 수준만 강제.
+
+patterns:
+  # ============================================================
+  # 한국 주식 (5)
+  # ============================================================
+
+  - id: openclaw_naver_finance_kospi
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "네이버 금융 코스피 시가총액 상위"
+    url: "https://finance.naver.com/sise/sise_market_sum.naver"
+    query: "오늘 코스피 시가총액 상위 종목"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: openclaw_naver_finance_samsung
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "삼성전자 (005930) 종목 페이지 — 가격, 재무"
+    url: "https://finance.naver.com/item/main.naver?code=005930"
+    query: "삼성전자 현재 주가와 시가총액"
+    live: required
+    assertions:
+      chunks_contain_any: ["삼성전자", "005930"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: openclaw_hankyung_market
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "한경 마켓 메인"
+    url: "https://www.hankyung.com/market"
+    query: "오늘 코스피 코스닥 동향"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: openclaw_mk_economy_main
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "매일경제 경제 섹션"
+    url: "https://www.mk.co.kr/news/economy/"
+    query: "오늘 한국 경제 주요 이슈"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: openclaw_kis_world_index
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "한국투자증권 해외 지수 — 미국·유럽·아시아 종합"
+    url: "https://securities.koreainvestment.com/main/research/market/world.jsp"
+    query: "최근 글로벌 주요 지수 동향"
+    live: optional      # 사이트 구조가 자주 바뀜
+    assertions:
+      n_chunks_returned: ">= 1"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 18000
+
+  # ============================================================
+  # 글로벌 주식 (5)
+  # ============================================================
+
+  - id: hermes_yahoo_finance_aapl
+    primary_agent: [hermes, claude_code]
+    category: single_fetch
+    description: "Yahoo Finance AAPL — Apple 주가 + 재무"
+    url: "https://finance.yahoo.com/quote/AAPL/"
+    query: "Apple stock price and market cap"
+    live: required
+    assertions:
+      chunks_contain_any: ["AAPL", "Apple"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: hermes_yahoo_finance_nvda
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "Yahoo Finance NVDA — semis benchmark"
+    url: "https://finance.yahoo.com/quote/NVDA/"
+    query: "NVIDIA stock fundamentals"
+    live: required
+    assertions:
+      chunks_contain_any: ["NVDA", "NVIDIA"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: hermes_reuters_markets
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "Reuters Markets — global market wrap"
+    url: "https://www.reuters.com/markets/"
+    query: "today's market summary"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: hermes_investing_com_indices
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "Investing.com 주요 지수 페이지"
+    url: "https://www.investing.com/indices/major-indices"
+    query: "S&P 500 NASDAQ Dow Jones today"
+    live: optional       # CF 보호로 가끔 챌린지 페이지 반환
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 22000
+
+  - id: hermes_marketwatch_main
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "MarketWatch — 미국 주식 + futures"
+    url: "https://www.marketwatch.com/markets"
+    query: "today's U.S. stock market open"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  # ============================================================
+  # 암호화폐 (3)
+  # ============================================================
+
+  - id: hermes_coingecko_bitcoin
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "CoinGecko BTC — 암호화폐 현재가 + 변동률"
+    url: "https://www.coingecko.com/en/coins/bitcoin"
+    query: "Bitcoin price market cap and 24h change"
+    live: required
+    assertions:
+      chunks_contain_any: ["Bitcoin", "BTC"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: hermes_coinmarketcap_top
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "CoinMarketCap top 100"
+    url: "https://coinmarketcap.com/"
+    query: "top cryptocurrencies by market cap"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 18000
+
+  - id: openclaw_upbit_btc_krw
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "업비트 BTC/KRW 시세"
+    url: "https://upbit.com/exchange?code=CRIX.UPBIT.KRW-BTC"
+    query: "비트코인 원화 시세"
+    live: optional
+    assertions:
+      n_chunks_returned: ">= 1"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 22000
+
+  # ============================================================
+  # 매크로 / 경제지표 (2)
+  # ============================================================
+
+  - id: hermes_fred_cpi
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "FRED CPI 시리즈 (CPIAUCSL)"
+    url: "https://fred.stlouisfed.org/series/CPIAUCSL"
+    query: "US Consumer Price Index latest value and trend"
+    live: required
+    assertions:
+      chunks_contain_any: ["CPI", "Consumer Price"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: openclaw_bok_base_rate
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "한국은행 기준금리 페이지"
+    url: "https://www.bok.or.kr/portal/singl/baseRate/list.do?dataSeCd=01&menuNo=200643"
+    query: "한국은행 기준금리 최근 변동"
+    live: optional
+    assertions:
+      chunks_contain_any: ["기준금리", "한국은행"]
+      n_chunks_returned: ">= 2"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 22000
