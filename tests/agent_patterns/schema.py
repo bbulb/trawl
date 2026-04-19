@@ -56,6 +56,13 @@ ASSERTION_KEYS = {
     "suggest_profile",
     "content_type",
     "truncated",
+    # C16 enrichment payload assertions (excerpts / outbound_links /
+    # page_entities / chain_hints). Keep names aligned with the
+    # PipelineResult field they inspect.
+    "excerpts_min_count",
+    "outbound_links_contain_any",
+    "page_entities_contain_any",
+    "chain_hints_has_key",
 }
 
 BUDGET_KEYS = {
@@ -278,6 +285,23 @@ def _check_assertion_shape(key: str, value: Any, _err) -> None:
     elif key in {"path", "fetcher_used", "content_type", "error_contains"}:
         if not isinstance(value, str):
             raise _err(f"assertion {key!r}: must be string")
+    elif key == "excerpts_min_count":
+        if not isinstance(value, (int, str)):
+            raise _err(
+                f"assertion {key!r}: must be int or comparison string like '>= 2'"
+            )
+        if isinstance(value, str):
+            _parse_comparison(value, _err, key=key)
+        elif value < 0:
+            raise _err(f"assertion {key!r}: must be non-negative, got {value}")
+    elif key in {"outbound_links_contain_any", "page_entities_contain_any"}:
+        if not isinstance(value, list) or not all(isinstance(s, str) for s in value):
+            raise _err(f"assertion {key!r}: must be a list of strings")
+        if not value:
+            raise _err(f"assertion {key!r}: must be non-empty")
+    elif key == "chain_hints_has_key":
+        if not isinstance(value, str) or not value:
+            raise _err(f"assertion {key!r}: must be a non-empty string")
 
 
 def _validate_budgets(raw: Any, _err) -> dict[str, Any]:

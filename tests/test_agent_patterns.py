@@ -238,6 +238,36 @@ def _evaluate_assertions(
             actual = bool(measurements.get("truncated"))
             if actual is not bool(expected):
                 fails.append(f"truncated: expected {expected}, got {actual}")
+        elif key == "excerpts_min_count":
+            actual = len(measurements.get("excerpts") or [])
+            spec = expected if isinstance(expected, str) else f">= {int(expected)}"
+            if not evaluate_comparison(spec, actual):
+                fails.append(f"excerpts_min_count: expected {expected!r}, got {actual}")
+        elif key == "outbound_links_contain_any":
+            links = measurements.get("outbound_links") or []
+            haystack = "\n".join(
+                (lk.get("url") or "") + "\n" + (lk.get("anchor_text") or "")
+                for lk in links
+            )
+            if not any(s in haystack for s in expected):
+                fails.append(
+                    f"outbound_links_contain_any: none of {expected!r} present "
+                    f"in {len(links)} links"
+                )
+        elif key == "page_entities_contain_any":
+            entities = measurements.get("page_entities") or []
+            haystack = "\n".join(entities)
+            if not any(s in haystack for s in expected):
+                fails.append(
+                    f"page_entities_contain_any: none of {expected!r} present "
+                    f"in {len(entities)} entities"
+                )
+        elif key == "chain_hints_has_key":
+            hints = measurements.get("chain_hints") or {}
+            if expected not in hints:
+                fails.append(
+                    f"chain_hints_has_key: {expected!r} not in keys {sorted(hints)!r}"
+                )
     return fails
 
 
