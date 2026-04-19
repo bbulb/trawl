@@ -9,6 +9,26 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Added
 
+- **C16 — Compositional payload enrichment.** New module
+  `src/trawl/enrichment.py` derives four lightweight metadata fields
+  from existing extraction output (no LLM, no network) so agents can
+  chain follow-up fetches without re-parsing the markdown payload:
+    * `excerpts` — top-3 chunks' first-sentence summary, char-capped
+      at 120 (handles ko/ja/zh sentence terminators, strips markdown
+      markup).
+    * `outbound_links` — markdown `[text](url)` references from the
+      emitted chunks, dedup'd, hard-capped at 50 entries / 10 KB.
+      Image refs excluded.
+    * `page_entities` — noun-phrase candidates pulled from `page_title`
+      + chunk `heading_path` (English Capitalised n-grams + Korean
+      Hangul runs), 20-entry cap.
+    * `chain_hints` — per-host follow-up dict for arxiv / github /
+      wikipedia (en/ko/ja) / youtube / stackoverflow. Empty for
+      unknown hosts.
+  Backward-compatible: all four `PipelineResult` fields default to
+  empty containers; legacy callers see no behaviour change. MCP
+  responses include the new fields automatically (via `to_dict`).
+  Spec: `docs/superpowers/specs/2026-04-19-c16-compositional-payload-design.md`.
 - **C7 — PDF Content-Type HEAD probe.** `fetchers/pdf.probe(url)`
   performs a small HEAD request before launching Playwright when the
   URL does not match the existing `.pdf` / `/pdf/` suffix heuristic.
