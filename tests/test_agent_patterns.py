@@ -570,23 +570,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="fail if any pattern's p95 exceeds baseline + 20%%",
     )
-    p.add_argument(
-        "--repeats",
-        type=int,
-        default=1,
-        help="repeat each measurement N times for p95 (live mode only)",
-    )
-    p.add_argument(
-        "--dry-run", action="store_true", help="schema validation + filter, no live fetches"
-    )
-    p.add_argument(
-        "--baseline", action="store_true", help="write current p95 measurements as new baseline"
-    )
-    p.add_argument(
-        "--regression",
-        action="store_true",
-        help="fail if any pattern's p95 exceeds baseline + 20%%",
-    )
     p.add_argument("--verbose", "-v", action="store_true")
     return p.parse_args(argv)
 
