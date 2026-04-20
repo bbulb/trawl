@@ -9,11 +9,15 @@ not yet follow semver strictly — expect breaking changes before
 
 _No changes yet._
 
-## [0.2.0] — 2026-04-20
+## [0.3.0] — 2026-04-20
 
-Second tagged release. Packs up the six C-series follow-ups and the
-longform retrieval cost spike that landed between 2026-04-10 and
-2026-04-20.
+Third tagged release. Packs up the six C-series follow-ups and the
+longform retrieval cost spike that landed between 2026-04-15 (the
+previous `v0.2.0` tag) and 2026-04-20.
+
+(Note: `v0.2.0` was cut on 2026-04-15 with a narrower scope — raw
+passthrough, Docker cleanup, WCXB benchmark. All subsequent work
+ships here as `0.3.0`.)
 
 Headline work: opt-in longform chunk budget (C5 follow-up, ~69%
 retrieval p95 reduction on wiki / arxiv pages), opt-in BM25 hybrid
