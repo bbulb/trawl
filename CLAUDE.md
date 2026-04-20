@@ -12,17 +12,23 @@ trawl directory. Humans should read `README.md` first, then
 
 ## Current status
 
-- **Version**: 0.1.0 + cross-encoder reranking, env var unification,
-  slot pinning, VLM profile prompt v2, raw passthrough, telemetry,
-  profile host-transfer, content-ready wait detector, reranker
-  title-injection, repeating-record chunking.
+- **Version**: 0.2.0 (2026-04-20). Highlights since 0.1.0: C6 BM25
+  hybrid retrieval (opt-in), C7 PDF HEAD probe, C8 per-fetch cache
+  (default on), C9 per-host adaptive ceiling (default on), C16
+  compositional payload enrichment, longform chunk budget prefilter
+  (opt-in). Full list in `CHANGELOG.md`.
 - **Parity matrix**: 15/15 cases pass (see `tests/test_cases.yaml`).
+  `kbo_schedule` pinned to a historical game day to survive KBO
+  off-days.
 - **Profile eval**: 36-site evaluation — 92% success rate, 16/36 IDEAL
   selectors.
 - **Benchmark vs Jina Reader**: ~23x fewer tokens on average across 12
   cases; profile-cached mode ~30x.
 - **WCXB external benchmark**: trawl `html_to_markdown` F1 = 0.777 vs
   Trafilatura baseline 0.750 on the 1,497-page dev split.
+- **Longform retrieval cost (opt-in)**: `TRAWL_CHUNK_BUDGET=100` cuts
+  retrieval_ms.p95 69% on 4 longform cases (wiki_history, arxiv_pdf,
+  wiki_llm, korean_wiki_person) with 4/4 rank-1 identity preserved.
 
 ### What a new session should do first
 
