@@ -21,7 +21,6 @@ from dataclasses import asdict, dataclass, field
 from urllib.parse import urlsplit
 
 from . import chunking, enrichment, extraction, fetch_cache, hyde, reranking, retrieval, telemetry
-from . import chunking, enrichment, extraction, hyde, reranking, retrieval, telemetry
 from .fetchers import github, passthrough, pdf, playwright, stackexchange, wikipedia, youtube
 
 logger = logging.getLogger(__name__)
@@ -51,6 +50,15 @@ PROFILE_TRANSFER_MAX_RATIO = float(
         "3.0",
     )
 )
+
+
+def _read_chunk_budget() -> int:
+    """Read `TRAWL_CHUNK_BUDGET` at call time; treat malformed input as disabled."""
+    raw = os.environ.get("TRAWL_CHUNK_BUDGET", "0")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 0
 
 
 @dataclass
@@ -93,6 +101,11 @@ class PipelineResult:
     # the full pipeline path resumed from a cached fetch. See
     # docs/superpowers/specs/2026-04-20-c8-per-fetch-cache-design.md.
     cache_hit: bool = False
+    # Longform retrieval cost (2026-04-20) — chunks that survived the
+    # BM25 prefilter and were actually sent to the embedding server.
+    # Equals `n_chunks_total` when `TRAWL_CHUNK_BUDGET` is unset or the
+    # pool was already under budget. 0 for error / passthrough paths.
+    n_chunks_embedded: int = 0
 
     @property
     def output_chars(self) -> int:
@@ -349,6 +362,7 @@ def _build_profile_result(
     }
 
     rerank_ms = 0
+    n_chunks_embedded = 0
     if len(chunks) <= PROFILE_DIRECT_CHUNK_THRESHOLD:
         path = "profile_direct"
         retrieved_dicts = [_chunk_to_dict(c, score=None) for c in chunks]
@@ -359,8 +373,12 @@ def _build_profile_result(
         chosen_k = _adaptive_k(len(chunks), override=k)
         retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
         hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "0") == "1"
-        retrieved = retrieval.retrieve(query, chunks, k=retrieve_k, hybrid=hybrid_flag)
+        chunk_budget = _read_chunk_budget()
+        retrieved = retrieval.retrieve(
+            query, chunks, k=retrieve_k, hybrid=hybrid_flag, chunk_budget=chunk_budget
+        )
         retrieval_ms = int((time.monotonic() - t_ret) * 1000)
+        n_chunks_embedded = retrieved.n_chunks_embedded
         if retrieved.error:
             return PipelineResult(
                 **base_kwargs,
@@ -369,6 +387,7 @@ def _build_profile_result(
                 chunks=[],
                 error=retrieved.error,
                 path=path,
+                n_chunks_embedded=retrieved.n_chunks_embedded,
             )
         if use_rerank and retrieved.scored:
             t_rr = time.monotonic()
@@ -404,6 +423,7 @@ def _build_profile_result(
             page_title, [getattr(c, "heading_path", []) for c in emitted_chunks]
         ),
         chain_hints=enrichment.derive_chain_hints(url),
+        n_chunks_embedded=n_chunks_embedded,
     )
 
 
@@ -868,8 +888,14 @@ def _run_full_pipeline(
     chosen_k = _adaptive_k(len(chunks), override=k)
     retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
     hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "0") == "1"
+    chunk_budget = _read_chunk_budget()
     retrieved = retrieval.retrieve(
-        query, chunks, k=retrieve_k, extra_query_texts=extras, hybrid=hybrid_flag
+        query,
+        chunks,
+        k=retrieve_k,
+        extra_query_texts=extras,
+        hybrid=hybrid_flag,
+        chunk_budget=chunk_budget,
     )
     if retrieved.error:
         return _error_result(
@@ -885,6 +911,7 @@ def _run_full_pipeline(
             n_chunks_total=len(chunks),
             hyde_used=use_hyde,
             hyde_text=hyde_text,
+            n_chunks_embedded=retrieved.n_chunks_embedded,
         )
 
     rerank_ms = 0
@@ -925,6 +952,7 @@ def _run_full_pipeline(
         page_title=page_title,
         content_type=content_type,
         cache_hit=cache_hit,
+        n_chunks_embedded=retrieved.n_chunks_embedded,
     )
 
 

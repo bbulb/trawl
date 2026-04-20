@@ -11,12 +11,6 @@ from __future__ import annotations
 from trawl import enrichment
 from trawl.chunking import Chunk
 
-from dataclasses import dataclass
-
-from trawl import enrichment
-from trawl.chunking import Chunk
-
-
 # ---------- excerpts
 
 
@@ -34,7 +28,9 @@ def test_excerpts_first_sentence_under_cap():
     chunks = [
         _chunk(0, "BGE-M3 is a multilingual embedding model. It supports dense and sparse output.")
     ]
-    chunks = [_chunk(0, "BGE-M3 is a multilingual embedding model. It supports dense and sparse output.")]
+    chunks = [
+        _chunk(0, "BGE-M3 is a multilingual embedding model. It supports dense and sparse output.")
+    ]
     out = enrichment.extract_excerpts(chunks)
     assert out == [{"chunk_idx": 0, "summary_120c": "BGE-M3 is a multilingual embedding model."}]
 
@@ -91,9 +87,7 @@ def test_excerpts_handles_empty_chunk():
 def test_excerpts_accepts_dict_chunks():
     """Defensive: callers may pass dict-shaped chunks (e.g. profile_direct)."""
     out = enrichment.extract_excerpts([{"chunk_index": 7, "text": "Hello world. Second sentence."}])
-    out = enrichment.extract_excerpts([
-        {"chunk_index": 7, "text": "Hello world. Second sentence."}
-    ])
+    out = enrichment.extract_excerpts([{"chunk_index": 7, "text": "Hello world. Second sentence."}])
     assert out == [{"chunk_idx": 7, "summary_120c": "Hello world."}]
 
 

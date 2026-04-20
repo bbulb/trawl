@@ -158,9 +158,7 @@ def parse_pattern(raw: dict[str, Any], *, shard: str = "") -> Pattern:
     category = raw.get("category")
     if category not in CATEGORIES:
         raise _err(f"category {category!r} not in allowed set {sorted(CATEGORIES)}")
-        raise _err(
-            f"category {category!r} not in allowed set {sorted(CATEGORIES)}"
-        )
+        raise _err(f"category {category!r} not in allowed set {sorted(CATEGORIES)}")
 
     description = str(raw.get("description", "")).strip()
     if not description:
@@ -175,9 +173,7 @@ def parse_pattern(raw: dict[str, Any], *, shard: str = "") -> Pattern:
 
     if has_steps and has_single:
         raise _err("pattern must use EITHER top-level url/query OR steps[], not both")
-        raise _err(
-            "pattern must use EITHER top-level url/query OR steps[], not both"
-        )
+        raise _err("pattern must use EITHER top-level url/query OR steps[], not both")
     if not has_steps and not has_single:
         raise _err("pattern must define either url+query or steps[]")
 
@@ -206,9 +202,7 @@ def parse_pattern(raw: dict[str, Any], *, shard: str = "") -> Pattern:
         if not isinstance(steps_raw, list):
             raise _err("'steps' must be a list")
         pattern.steps = [_parse_step(s, idx, _err) for idx, s in enumerate(steps_raw)]
-        pattern.steps = [
-            _parse_step(s, idx, _err) for idx, s in enumerate(steps_raw)
-        ]
+        pattern.steps = [_parse_step(s, idx, _err) for idx, s in enumerate(steps_raw)]
         if not pattern.steps:
             raise _err("'steps' must contain at least one step")
 
@@ -227,9 +221,7 @@ def _parse_step(raw: Any, idx: int, _err) -> PatternStep:
     if ref is not None:
         if not isinstance(ref, int) or ref < 0 or ref >= idx:
             raise _err(f"step {idx}: ref={ref!r} must be an integer in [0, {idx})")
-            raise _err(
-                f"step {idx}: ref={ref!r} must be an integer in [0, {idx})"
-            )
+            raise _err(f"step {idx}: ref={ref!r} must be an integer in [0, {idx})")
         if "url" in raw or "query" in raw:
             raise _err(
                 f"step {idx}: when ref= is set, url/query must come from the referenced step"
@@ -261,9 +253,7 @@ def _validate_assertions(raw: Any, _err) -> dict[str, Any]:
     bad_keys = set(raw) - ASSERTION_KEYS
     if bad_keys:
         raise _err(f"unknown assertion keys {sorted(bad_keys)}; allowed: {sorted(ASSERTION_KEYS)}")
-        raise _err(
-            f"unknown assertion keys {sorted(bad_keys)}; allowed: {sorted(ASSERTION_KEYS)}"
-        )
+        raise _err(f"unknown assertion keys {sorted(bad_keys)}; allowed: {sorted(ASSERTION_KEYS)}")
     for key, value in raw.items():
         _check_assertion_shape(key, value, _err)
     return dict(raw)
@@ -313,9 +303,7 @@ def _validate_budgets(raw: Any, _err) -> dict[str, Any]:
     bad_keys = set(raw) - BUDGET_KEYS
     if bad_keys:
         raise _err(f"unknown budget keys {sorted(bad_keys)}; allowed: {sorted(BUDGET_KEYS)}")
-        raise _err(
-            f"unknown budget keys {sorted(bad_keys)}; allowed: {sorted(BUDGET_KEYS)}"
-        )
+        raise _err(f"unknown budget keys {sorted(bad_keys)}; allowed: {sorted(BUDGET_KEYS)}")
     for key, value in raw.items():
         if not isinstance(value, (int, float)):
             raise _err(f"budget {key!r}: must be numeric")
