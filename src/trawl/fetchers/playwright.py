@@ -16,6 +16,7 @@ wait-until fallback, and wait_for_ms stay consistent between them.
 from __future__ import annotations
 
 import atexit
+import os
 import threading
 import time
 from collections.abc import Iterator
@@ -35,6 +36,18 @@ from playwright.sync_api import (
 from playwright_stealth import Stealth
 
 from .. import host_stats
+
+# Custom-element tag names whose shadow-root content is the information
+# payload (typically code-block wrappers). Before `page.content()` is
+# called we inline each matching element's `shadowRoot.innerHTML` into
+# its light DOM so the extractor (Trafilatura) sees the rendered code.
+# `page.content()` does not traverse shadow roots by default.
+#
+# Allow-list only. Do NOT add UI-chrome custom elements (copy buttons,
+# navigation widgets) — unwrapping them pollutes extraction with
+# boilerplate. Each addition should be backed by a measurement showing
+# flip-to-pass on a specific pattern AND no regression elsewhere.
+SHADOW_DOM_UNWRAP_TAGS: tuple[str, ...] = ("mdn-code-example",)
 
 
 @dataclass
@@ -145,6 +158,66 @@ _lock = threading.Lock()
 NETWORKIDLE_BUDGET_MS = 3000
 
 
+def _unwrap_shadow_dom(page: Page) -> None:
+    """Inline shadow-root code-block content into each custom element
+    listed in ``SHADOW_DOM_UNWRAP_TAGS`` so the subsequent
+    ``page.content()`` call captures it. No-op when disabled, when the
+    tag list is empty, when no matching elements exist, or when a
+    matching element has an empty shadow root.
+
+    For each matching element we look for a ``pre > code`` inside its
+    shadow root and inline ``<pre><code>{textContent}</code></pre>``
+    into the light DOM. Using ``textContent`` (rather than the full
+    shadow ``innerHTML``) bypasses the syntax-highlight ``<span>``
+    scaffolding that otherwise splits identifiers like ``JSON.stringify``
+    across tag boundaries during Markdown conversion. Falls back to
+    inlining shadow ``innerHTML`` when no ``pre > code`` structure is
+    present.
+
+    Idempotent — repeated calls keep pulling the same content from the
+    shadow root. On any JavaScript exception the helper swallows the
+    error and leaves the page's light DOM unchanged (worst case
+    matches the pre-spike behaviour).
+    """
+    if os.environ.get("TRAWL_SHADOW_DOM_UNWRAP", "1") == "0":
+        return
+    if not SHADOW_DOM_UNWRAP_TAGS:
+        return
+    selectors = ",".join(SHADOW_DOM_UNWRAP_TAGS)
+    try:
+        page.evaluate(
+            """
+            (selectors) => {
+                const escapeHtml = (s) => s
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;');
+                const els = document.querySelectorAll(selectors);
+                for (const el of els) {
+                    try {
+                        const root = el.shadowRoot;
+                        if (!root) continue;
+                        const code = root.querySelector('pre > code');
+                        if (code && code.textContent.trim().length > 0) {
+                            el.innerHTML = '<pre><code>' +
+                                escapeHtml(code.textContent) +
+                                '</code></pre>';
+                        } else if (root.innerHTML.trim().length > 0) {
+                            el.innerHTML = root.innerHTML;
+                        }
+                    } catch (err) {
+                        /* skip this element, keep going */
+                    }
+                }
+            }
+            """,
+            selectors,
+        )
+    except Exception:
+        # Swallow — extraction must not be blocked by a JS eval error.
+        pass
+
+
 def _wait_for_content_ready(page: Page, *, profile_selector: str | None, max_wait_ms: int) -> None:
     """Block until the page's visible text is stable and — when a
     profile selector is provided — that selector's content is no
@@ -230,6 +303,7 @@ def _open_context(
             _wait_for_content_ready(
                 page, profile_selector=profile_selector, max_wait_ms=wait_for_ms
             )
+        _unwrap_shadow_dom(page)
         html = page.content()
         content_type = None
         if response is not None:

@@ -129,6 +129,24 @@ trawl directory. Humans should read `README.md` first, then
     identity preserved. `PipelineResult.n_chunks_embedded` reports the
     post-prefilter count. See
     `docs/superpowers/specs/2026-04-20-longform-retrieval-cost-design.md`.
+  - **Shadow-DOM unwrap for code-block custom elements** (default on)
+    — `fetchers/playwright.py` inlines each matching element's
+    `shadowRoot`'s `pre > code` textContent (wrapped in a fresh
+    `<pre><code>`) into the light DOM before `page.content()`.
+    Initial allow-list: `mdn-code-example`. Playwright's default
+    content capture skips shadow roots, so pages that render code in
+    Shadow DOM (notably MDN post-2024 redesign) previously fed the
+    extractor empty `<mdn-code-example></mdn-code-example>` tags;
+    the MDN fetch pattern's assertion keywords (`JSON.stringify`,
+    `method:`, `application/json`) were simply not in the extracted
+    markdown. Measurement on the 16 `code_heavy_query` patterns:
+    baseline 15/16 → on 16/16 (`claude_code_mdn_fetch_api` flipped
+    to PASS), top1 changed on 1/16 (MDN only, `n_chunks_total`
+    22 → 24), parity 15/15 in both modes. Disable via
+    `TRAWL_SHADOW_DOM_UNWRAP=0`. Grow `SHADOW_DOM_UNWRAP_TAGS` only
+    with a companion measurement: each addition must fix a specific
+    pattern and not regress the other 15. See
+    `docs/superpowers/specs/2026-04-20-playwright-shadow-dom-design.md`.
 
 ## Quick Reference
 
