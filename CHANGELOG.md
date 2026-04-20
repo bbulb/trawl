@@ -9,6 +9,134 @@ not yet follow semver strictly — expect breaking changes before
 
 _No changes yet._
 
+## [0.4.0] — 2026-04-20
+
+Fourth tagged release. Closes the C6 (hybrid retrieval) follow-up
+chain surfaced in 0.3.0's "retrieval still struggles on
+`code_heavy_query`" note. Headline: Playwright shadow-DOM unwrap for
+code-block custom elements — MDN's post-2024 redesign wraps every
+code example in `<mdn-code-example>` backed by Shadow DOM, which
+Playwright's `page.content()` does not traverse. Inlining the shadow
+`<pre><code>` content before extraction flips
+`claude_code_mdn_fetch_api` to PASS and brings the 16-pattern
+`code_heavy_query` slice to 16/16.
+
+Also includes two Stack Exchange URL corrections (PR #30) and four
+research spikes (PR #29/#31/#32/#33) whose conclusions and runners
+are kept as reusable artefacts. Three of those spikes rejected their
+hypothesis at the pre-registered gate — the measurement discipline
+ended up being as valuable as the one hypothesis that stuck, because
+each rejection narrowed the search to the actual bottleneck (Shadow
+DOM).
+
+### Added
+
+- **Shadow-DOM unwrap for code-block custom elements (default on).**
+  `src/trawl/fetchers/playwright.py` introduces
+  `SHADOW_DOM_UNWRAP_TAGS` (initial allow-list: `mdn-code-example`)
+  and `_unwrap_shadow_dom()`, called between the content-ready wait
+  and `page.content()`. For each matching element, pulls
+  `shadowRoot.querySelector('pre > code').textContent`, HTML-escapes
+  it, and inlines `<pre><code>{text}</code></pre>` into the light
+  DOM so `html_to_markdown` / Trafilatura sees a proper code block.
+  Using `textContent` (rather than the full shadow `innerHTML`)
+  avoids the syntax-highlight `<span>` scaffolding that would
+  otherwise split identifiers like `JSON.stringify` across tag
+  boundaries during markdown conversion. Falls back to the full
+  `shadowRoot.innerHTML` when no `pre > code` exists. Idempotent;
+  JS eval exceptions are swallowed so extraction never fails on
+  account of unwrap.
+    * New env var: `TRAWL_SHADOW_DOM_UNWRAP` (default `"1"`; set to
+      `"0"` to disable).
+    * New module-level constant: `SHADOW_DOM_UNWRAP_TAGS` in
+      `fetchers/playwright.py`. Additions must go through the same
+      measurement gate (fix a specific pattern and not regress the
+      other 15).
+    * Measurement runner: `benchmarks/shadow_dom_sweep.py` (2 modes
+      × 16 patterns × 2 iter + 15-case parity per mode).
+    * Design doc:
+      `docs/superpowers/specs/2026-04-20-playwright-shadow-dom-design.md`.
+    * Measurement: `shadow_dom_off` 15/16 → `shadow_dom_on` 16/16;
+      `flipped_to_pass = [claude_code_mdn_fetch_api]`;
+      `flipped_to_fail = []`; `top1_identity_changed = 1/16` (MDN
+      only, `n_chunks_total` 22 → 24); parity 15/15 both modes;
+      retrieval_ms regression within noise. Raw at
+      `benchmarks/results/shadow-dom-sweep/2026-04-20T10-26-17Z/`
+      (gitignored).
+
+### Fixed
+
+- **Two Stack Exchange `code_heavy_query` URLs resolved to
+  unrelated questions.** `claude_code_serverfault_nginx_reverse_proxy`
+  pointed at `serverfault.com/questions/378860` (resolves to an
+  apache-vhosts / cookie question, not the nginx reverse-proxy Host
+  header question). `claude_code_stackoverflow_python_async_subprocess`
+  pointed at SO #44488350, which is an *answer* ID whose parent
+  question is about CSV escaping. Stack Exchange resolves by ID
+  alone, ignoring the slug, so both patterns had been failing
+  against content unrelated to their query since the coding shard
+  was introduced. Replaced with the canonical questions (SF #87056
+  and SO #42639984); both flip to PASS. Not an extraction defect —
+  `benchmarks/stackexchange_extraction_diag.py` confirmed trawl's
+  extraction was intact. Also removes a duplicate argparse flag
+  registration in `tests/test_agent_patterns.py` left behind by a
+  stack-merge union resolver.
+
+### Research (no code change, shipped as reusable runners + design docs)
+
+- **C6 RRF-k tuning spike** (PR #29). Measured
+  `TRAWL_HYBRID_RRF_K ∈ {10, 30, 60, 100}` on the 16
+  `code_heavy_query` patterns with hybrid retrieval on. All four k
+  values produced identical assertion pass rate and identical top-1
+  reshuffles across three patterns — the reranker stabilises the
+  pre-rerank ordering, so RRF k is effectively invisible
+  downstream. Gate (b): retain `k=60`. Runner:
+  `benchmarks/c6_rrf_k_sweep.py`; design doc:
+  `docs/superpowers/specs/2026-04-20-c6-rrf-k-tuning-design.md`.
+- **Identifier-aware BM25 tokenizer spike** (PR #31). Hypothesised
+  that emitting compound tokens for dotted (`asyncio.gather`) /
+  hyphenated (`Content-Type`) identifiers would let the sparse
+  ranker boost code-heavy chunks. Measurement (3 modes × 16
+  patterns): `net_assertion_delta = 0`, `top1_identity_changed =
+  0/16`. Corpus-side compound emission alone is insufficient when
+  queries don't contain the compound identifier (the MDN query
+  describes intent — "send a POST request" — not symbols). Gate
+  (b). Runner: `benchmarks/bm25_id_aware_sweep.py`; design doc:
+  `docs/superpowers/specs/2026-04-20-bm25-id-aware-tokenizer-design.md`.
+- **HyDE → BM25 query spike** (PR #32). Hypothesised that the
+  HyDE hypothetical answer (which does emit compound identifiers
+  under the current Gemma prompt) could feed the sparse query if
+  routed into BM25 in addition to the dense path. Measurement (3
+  modes × 16 patterns): `net_delta = 0`. HyDE produced the right
+  identifiers, but the MDN failure survived because — as the next
+  spike proved — the underlying chunks didn't contain those
+  identifiers in the first place (they were in Shadow DOM). Gate
+  (b). Runner: `benchmarks/hyde_compound_id_sweep.py`; design doc:
+  `docs/superpowers/specs/2026-04-20-hyde-compound-identifier-design.md`.
+- **MDN reranker diagnostic** (PR #33). One-shot diagnostic to
+  locate the MDN assertion-keyword chunk's rank across raw /
+  reranked / HyDE modes. Found the keyword chunk at rank 14 even
+  in `raw` mode (no reranker) — reranker was not the bottleneck.
+  Direct inspection of the HTML returned by Playwright showed 23
+  `<mdn-code-example>` tags with `innerHTML`-empty light DOM; the
+  real code lived in Shadow DOM. Decision hint `D1`, which set up
+  PR #34. Runner: `benchmarks/mdn_reranker_diag.py`; design doc:
+  `docs/superpowers/specs/2026-04-20-mdn-reranker-diagnostic-design.md`.
+
+### Known caveats
+
+- **Reranker `:8083` intermittently returns HTTP 500** during
+  sweeps (observed across PR #31/#32/#33/#34 measurements). The
+  client falls back to cosine-only scoring per the existing
+  `reranker unavailable, falling back to cosine: ...` log line, so
+  assertions still pass on the 16-pattern slice and on the 15-case
+  parity matrix. Flagged here but not treated as a 0.4.0 gate
+  failure; a separate reliability investigation is queued.
+- **`SHADOW_DOM_UNWRAP_TAGS` allow-list is narrow.** Only
+  `mdn-code-example` ships. Other docs sites that use similar
+  Shadow-DOM wrappers (Docusaurus / GitBook variants) are not yet
+  covered; each addition will come with its own measurement PR.
+
 ## [0.3.0] — 2026-04-20
 
 Third tagged release. Packs up the six C-series follow-ups and the

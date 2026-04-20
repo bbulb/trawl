@@ -12,12 +12,15 @@ trawl directory. Humans should read `README.md` first, then
 
 ## Current status
 
-- **Version**: 0.3.0 (2026-04-20). Highlights since the narrow
-  `v0.2.0` tag (raw passthrough / Docker / WCXB, 2026-04-15): C6
-  BM25 hybrid retrieval (opt-in), C7 PDF HEAD probe, C8 per-fetch
-  cache (default on), C9 per-host adaptive ceiling (default on),
-  C16 compositional payload enrichment, longform chunk budget
-  prefilter (opt-in). Full list in `CHANGELOG.md`.
+- **Version**: 0.4.0 (2026-04-20). Highlights since `v0.3.0`: shadow-
+  DOM unwrap for code-block custom elements (default on — MDN-style
+  `<mdn-code-example>` pages now extract their code bodies), Stack
+  Exchange URL corrections (SO/SF patterns resolved to unrelated
+  questions pre-fix), and four research spikes whose measurements
+  are preserved as reusable runners (C6 RRF-k, id-aware BM25
+  tokenizer, HyDE → BM25 extras, MDN reranker diagnostic). C6
+  follow-up chain closed at `code_heavy_query` 16/16. Full list in
+  `CHANGELOG.md`.
 - **Parity matrix**: 15/15 cases pass (see `tests/test_cases.yaml`).
   `kbo_schedule` pinned to a historical game day to survive KBO
   off-days.
@@ -129,6 +132,24 @@ trawl directory. Humans should read `README.md` first, then
     identity preserved. `PipelineResult.n_chunks_embedded` reports the
     post-prefilter count. See
     `docs/superpowers/specs/2026-04-20-longform-retrieval-cost-design.md`.
+  - **Shadow-DOM unwrap for code-block custom elements** (default on)
+    — `fetchers/playwright.py` inlines each matching element's
+    `shadowRoot`'s `pre > code` textContent (wrapped in a fresh
+    `<pre><code>`) into the light DOM before `page.content()`.
+    Initial allow-list: `mdn-code-example`. Playwright's default
+    content capture skips shadow roots, so pages that render code in
+    Shadow DOM (notably MDN post-2024 redesign) previously fed the
+    extractor empty `<mdn-code-example></mdn-code-example>` tags;
+    the MDN fetch pattern's assertion keywords (`JSON.stringify`,
+    `method:`, `application/json`) were simply not in the extracted
+    markdown. Measurement on the 16 `code_heavy_query` patterns:
+    baseline 15/16 → on 16/16 (`claude_code_mdn_fetch_api` flipped
+    to PASS), top1 changed on 1/16 (MDN only, `n_chunks_total`
+    22 → 24), parity 15/15 in both modes. Disable via
+    `TRAWL_SHADOW_DOM_UNWRAP=0`. Grow `SHADOW_DOM_UNWRAP_TAGS` only
+    with a companion measurement: each addition must fix a specific
+    pattern and not regress the other 15. See
+    `docs/superpowers/specs/2026-04-20-playwright-shadow-dom-design.md`.
 
 ## Quick Reference
 
