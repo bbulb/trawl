@@ -12,11 +12,12 @@ trawl directory. Humans should read `README.md` first, then
 
 ## Current status
 
-- **Version**: 0.2.0 (2026-04-20). Highlights since 0.1.0: C6 BM25
-  hybrid retrieval (opt-in), C7 PDF HEAD probe, C8 per-fetch cache
-  (default on), C9 per-host adaptive ceiling (default on), C16
-  compositional payload enrichment, longform chunk budget prefilter
-  (opt-in). Full list in `CHANGELOG.md`.
+- **Version**: 0.3.0 (2026-04-20). Highlights since the narrow
+  `v0.2.0` tag (raw passthrough / Docker / WCXB, 2026-04-15): C6
+  BM25 hybrid retrieval (opt-in), C7 PDF HEAD probe, C8 per-fetch
+  cache (default on), C9 per-host adaptive ceiling (default on),
+  C16 compositional payload enrichment, longform chunk budget
+  prefilter (opt-in). Full list in `CHANGELOG.md`.
 - **Parity matrix**: 15/15 cases pass (see `tests/test_cases.yaml`).
   `kbo_schedule` pinned to a historical game day to survive KBO
   off-days.
