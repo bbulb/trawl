@@ -11,12 +11,6 @@ from __future__ import annotations
 from trawl import enrichment
 from trawl.chunking import Chunk
 
-from dataclasses import dataclass
-
-from trawl import enrichment
-from trawl.chunking import Chunk
-
-
 # ---------- excerpts
 
 
