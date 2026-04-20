@@ -7,8 +7,232 @@ not yet follow semver strictly — expect breaking changes before
 
 ## [Unreleased]
 
+_No changes yet._
+
+## [0.3.0] — 2026-04-20
+
+Third tagged release. Packs up the six C-series follow-ups and the
+longform retrieval cost spike that landed between 2026-04-15 (the
+previous `v0.2.0` tag) and 2026-04-20.
+
+(Note: `v0.2.0` was cut on 2026-04-15 with a narrower scope — raw
+passthrough, Docker cleanup, WCXB benchmark. All subsequent work
+ships here as `0.3.0`.)
+
+Headline work: opt-in longform chunk budget (C5 follow-up, ~69%
+retrieval p95 reduction on wiki / arxiv pages), opt-in BM25 hybrid
+retrieval (C6), per-fetch result cache (C8, default on), per-host
+adaptive content-ready ceiling (C9, default on), C7 PDF HEAD probe,
+C16 compositional payload enrichment, agent-patterns harness shard
+groundwork, and assorted lint / stack-merge cleanup.
+
+Per-feature detail below.
+
 ### Added
 
+- **Longform retrieval cost — chunk budget + BM25 prefilter (opt-in).**
+  New optional `chunk_budget` kwarg on
+  `src/trawl/retrieval.py::retrieve()` and matching env var
+  `TRAWL_CHUNK_BUDGET` (default `0` = disabled). When set and a page
+  produces more chunks than the budget, the surplus is dropped *before*
+  the embedding loop using the C6 BM25 scorer, so only the top-N
+  chunks reach bge-m3. Reuses the C6 tokenizer; no new deps. Caps
+  embedding cost on longform pages (Wikipedia, arXiv PDFs).
+  Measurement at `TRAWL_CHUNK_BUDGET=100` (4 longform cases × 2 modes
+  × 3 iterations): `retrieval_ms.p95` drops 6,002 ms → 1,890 ms (69%
+  reduction), 4/4 cases keep the same post-reranker rank-1 chunk,
+  parity matrix unchanged at the pre-existing 14/15 (the lone fail,
+  `kbo_schedule`, already fails on clean `develop`). New
+  `PipelineResult.n_chunks_embedded` field + `telemetry.jsonl`
+  schema v1 entry reports the post-prefilter count so hit rate is
+  measurable without a rerun. Spec:
+  `docs/superpowers/specs/2026-04-20-longform-retrieval-cost-design.md`.
+  Follows up on the C5 premise spike conclusion
+  (`docs/superpowers/specs/2026-04-20-c5-hierarchical-fetch-conclusion.md`).
+    * New env var: `TRAWL_CHUNK_BUDGET` (default `0`).
+    * 8 unit tests in `tests/test_retrieval_chunk_budget.py`
+      (monkey-patched embeddings).
+    * Measurement script: `benchmarks/longform_retrieval_cost_measure.py`
+      (takes `--budget`, `--iterations`, writes JSON summary + md
+      report to `benchmarks/results/longform-retrieval-cost/<ts>/`).
+- **C6 — BM25 hybrid retrieval (opt-in).** New module
+  `src/trawl/bm25.py` exposes a rule-based multilingual tokenizer
+  (Latin word-level / Hangul character bigrams / kana & CJK-unified
+  single characters), a thin wrapper around `rank_bm25.BM25Okapi`,
+  and a Reciprocal Rank Fusion helper. When
+  `TRAWL_HYBRID_RETRIEVAL=1` is set, `src/trawl/retrieval.py::retrieve()`
+  scores BM25 alongside dense cosine and fuses both rankings via RRF
+  (`k=60`, override with `TRAWL_HYBRID_RRF_K`). `ScoredChunk.score`
+  still carries the raw dense cosine so the reranker and telemetry
+  see the same numbers as before — only the pre-rerank ordering
+  changes. Dense-only behaviour (default off) is bit-for-bit
+  unchanged. Parity matrix stays 15/15 in both modes. Measurement:
+  `notes/c6-hybrid-measurement.md`. Spec:
+  `docs/superpowers/specs/2026-04-19-c6-hybrid-retrieval-design.md`.
+    * New dep: `rank_bm25>=0.2.2` (pure-Python BM25Okapi + numpy).
+    * New env vars: `TRAWL_HYBRID_RETRIEVAL` (default `0`),
+      `TRAWL_HYBRID_RRF_K` (default `60`).
+    * 25 unit tests in `tests/test_bm25.py` + 7 integration tests in
+      `tests/test_retrieval_hybrid.py` (monkey-patched embeddings,
+      no live infra required).
+- **Agent-patterns assertion DSL — `cache_hit` key.** Extends the
+  `tests/agent_patterns/` whitelist with a `cache_hit: bool` key that
+  mirrors `PipelineResult.cache_hit`. Pattern authors can now assert
+  that a repeat-visit step actually served from the C8 per-fetch
+  cache. Applied to the three `workflows.yaml::repeat_visits` patterns
+  so `step 1+` require `cache_hit: true` on non-profile fetches and
+  the final profile-fast-path step requires `cache_hit: false`
+  (profile path bypasses `fetch_cache` by design).
+- **C9 — Per-host adaptive content-ready ceiling.** New module
+  `src/trawl/host_stats.py` tracks the last 50 Playwright fetch
+  durations per hostname. `fetchers/playwright.fetch()` and
+  `render_session()` now consult `host_stats.ceiling_ms(url,
+  default=wait_for_ms)` before opening a context; after 5
+  observations the wait ceiling switches from the static 5000 ms
+  default to `p95 × 1.5`, clamped to `[1500, 15000] ms`. Observations
+  below `MIN_OBSERVATIONS` fall back to the caller-provided default,
+  so new installs behave identically until a host warms up.
+    * On-disk JSON at `~/.cache/trawl/host_stats.json` (atomic
+      rewrite, corrupt/schema-mismatch recovery).
+    * Observations above `MAX_CEILING_MS × 2` or below zero are
+      discarded as sanity checks.
+    * New env vars `TRAWL_HOST_STATS` (default `1`, set `0` to
+      disable recording and fall back to the static ceiling) and
+      `TRAWL_HOST_STATS_PATH` (default
+      `~/.cache/trawl/host_stats.json`).
+    * `render_session()` consults ceilings but doesn't record —
+      caller holds the session arbitrarily long.
+    * 21 unit tests in `tests/test_host_stats.py` cover warm-up
+      threshold, bounds, rolling-window eviction, sanity filter,
+      corrupt-file recovery, and env disable.
+  Spec: `docs/superpowers/specs/2026-04-20-c9-per-host-ceiling-design.md`.
+- **C8 — Per-fetch result cache.** New module `src/trawl/fetch_cache.py`
+  caches successful HTML/PDF fetches to
+  `~/.cache/trawl/fetches/<sha256>.json` keyed by URL. Subsequent fetches
+  within the TTL skip Playwright + Trafilatura entirely; chunking,
+  embedding, retrieval, and enrichment still run fresh (query-specific).
+  Expected savings: ~2-5 s per warm repeat visit (60-70% of total
+  latency on repeat_visits workflows).
+    * `PipelineResult.cache_hit: bool` exposes reuse for telemetry /
+      assertion authors (new field, default `False`, no MCP API change).
+    * New env vars `TRAWL_FETCH_CACHE_TTL` (default 300, set `0` to
+      disable), `TRAWL_FETCH_CACHE_PATH` (default
+      `~/.cache/trawl/fetches`), `TRAWL_FETCH_CACHE_MAX_MB` (default
+      100, soft cap with mtime-based LRU trim).
+    * Profile fast/transfer paths, passthrough branches, and error
+      results are never cached — each has a distinct invalidation
+      mode that MVP scope excludes.
+    * Atomic file writes (`tempfile` + `os.replace`). Corrupt or
+      schema-mismatched entries are skipped and deleted on the next
+      read.
+    * 21 unit tests in `tests/test_fetch_cache.py` + 7 pipeline
+      integration tests in `tests/test_pipeline_cache.py`. No live
+      infra required for either.
+  Spec: `docs/superpowers/specs/2026-04-20-c8-per-fetch-cache-design.md`.
+- **C16 — Compositional payload enrichment.** New module
+  `src/trawl/enrichment.py` derives four lightweight metadata fields
+  from existing extraction output (no LLM, no network) so agents can
+  chain follow-up fetches without re-parsing the markdown payload:
+    * `excerpts` — top-3 chunks' first-sentence summary, char-capped
+      at 120 (handles ko/ja/zh sentence terminators, strips markdown
+      markup).
+    * `outbound_links` — markdown `[text](url)` references from the
+      emitted chunks, dedup'd, hard-capped at 50 entries / 10 KB.
+      Image refs excluded.
+    * `page_entities` — noun-phrase candidates pulled from `page_title`
+      + chunk `heading_path` (English Capitalised n-grams + Korean
+      Hangul runs), 20-entry cap.
+    * `chain_hints` — per-host follow-up dict for arxiv / github /
+      wikipedia (en/ko/ja) / youtube / stackoverflow. Empty for
+      unknown hosts.
+  Backward-compatible: all four `PipelineResult` fields default to
+  empty containers; legacy callers see no behaviour change. MCP
+  responses include the new fields automatically (via `to_dict`).
+  Spec: `docs/superpowers/specs/2026-04-19-c16-compositional-payload-design.md`.
+- **Agent-patterns assertion DSL — C16 enrichment keys.** Extends the
+  `tests/agent_patterns/` assertion whitelist with four keys that let
+  pattern authors verify the compositional payload directly:
+    * `excerpts_min_count` — `int` or `">= N"`, measured against the
+      `excerpts` field length.
+    * `outbound_links_contain_any` — `list[str]` of substrings
+      matched against each link's `url` or `anchor_text`.
+    * `page_entities_contain_any` — `list[str]` of substrings matched
+      against the emitted `page_entities`.
+    * `chain_hints_has_key` — `str`, the expected top-level key in the
+      `chain_hints` dict.
+  Applied to the two `workflows.yaml` compositional patterns so arXiv
+  / GitHub host-specific `chain_hints` (`pdf_template`, `raw_template`)
+  and minimum excerpt counts are now live assertions.
+- **C7 — PDF Content-Type HEAD probe.** `fetchers/pdf.probe(url)`
+  performs a small HEAD request before launching Playwright when the
+  URL does not match the existing `.pdf` / `/pdf/` suffix heuristic.
+  When the response Content-Type is `application/pdf`, the pipeline
+  routes to `pdf.fetch()` instead of rendering the PDF viewer chrome
+  through Chromium. New `fetcher_used` value `pdf-probed` distinguishes
+  this from the suffix-hit path. Probe failure (HEAD 405, timeout,
+  network error) silently falls through to the existing HTML path —
+  C7 must never make trawl slower than before. Closes the
+  ARCHITECTURE.md "Future work #4" item. Mirrors the existing
+  `passthrough.probe` pattern.
+- **Repeating-record chunking (`src/trawl/records.py`).** Scans
+  rendered HTML for runs of sibling elements with the same
+  `(tag, sorted_class_list)` signature (≥3 members, excluding
+  nav/sidebar/tab noise) and injects ASCII sentinel lines around
+  each record before extraction. The chunker honours the sentinels
+  and emits one atomic chunk per record regardless of `max_chars`.
+  Covers job listings, news cards, product rows, bestseller grids —
+  anywhere retrieval should rank individual records instead of
+  fragmenting mid-record. Three new parity cases
+  (`wanted_jobs`, `hada_news`, `aladin_bestsellers`) bring the
+  matrix to **15/15**. Toggle via `TRAWL_RECORDS` (default on).
+- **Raw passthrough for structured-data URLs
+  (`src/trawl/fetchers/passthrough.py`).** URLs with `.json`,
+  `.xml`, `.rss`, or `.atom` suffixes skip Playwright entirely and
+  return raw bytes via httpx, capped at
+  `TRAWL_PASSTHROUGH_MAX_BYTES` (default 256 KB). Suffix-less
+  endpoints are detected by a HEAD pre-probe. A post-detection path
+  covers the case where Chromium wraps a JSON response in a viewer
+  DOM: the rendered Content-Type triggers a re-fetch of raw bytes.
+  Passthrough URLs don't require a query.
+- **Opt-in telemetry (`src/trawl/telemetry.py`).** Activated with
+  `TRAWL_TELEMETRY=1`; appends one JSON line per `fetch_relevant()`
+  call to `~/.cache/trawl/telemetry.jsonl` (override via
+  `TRAWL_TELEMETRY_PATH`). Single-generation size rotation at 64 MB.
+  Captures host, URL, query SHA-1 prefix (never plaintext query),
+  fetcher path, profile hit/miss, rerank/HyDE flags, and latency
+  breakdown. Purpose: feed the C4 decision in `notes/RESEARCH.md`.
+- **Profile host-transfer path.** When no exact-URL profile exists
+  for a URL but the host has other profiles, trawl tries each
+  existing selector, verifies the matched subtree's char count is
+  within `[TRAWL_PROFILE_TRANSFER_MIN_RATIO,
+  TRAWL_PROFILE_TRANSFER_MAX_RATIO]` of the recorded size, and on
+  success persists a copy of the profile under the new URL's hash
+  for future exact-match hits. Extends the VLM-profile ROI to sibling
+  URLs without a second VLM call.
+- **Content-ready wait detector for Playwright fetches.** Replaces
+  the previous fixed `wait_for_ms` delay with an async predicate
+  that polls DOM state (text length, stable ticks, absence of
+  placeholder patterns) up to the `wait_for_ms` ceiling. Measured:
+  avg fetch_ms 67% shorter across the parity matrix; Discourse/chat
+  SPAs that held websockets open (e.g. NVIDIA forum: 17s → 4.4s) no
+  longer wait for `networkidle`. Guarded by a `NETWORKIDLE_BUDGET_MS`
+  short-fuse so suffering SPAs drop to `domcontentloaded`.
+- **Streamable-HTTP MCP transport.** `python -m trawl_mcp --http
+  [HOST:PORT]` starts the same tool set over streamable HTTP (default
+  `127.0.0.1:8765`) in addition to the default stdio transport. Lets
+  HTTP-only MCP clients integrate trawl without a stdio wrapper.
+- **Reranker title-injection (C3 spike conclusion).** With
+  `TRAWL_RERANK_INCLUDE_TITLE=1` (default on), reranker inputs are
+  formatted as `Title: <page_title>\nSection: <heading>\nbody`.
+  Average +0.27 top-1 relevance score vs bare body on the parity
+  matrix; 0 regressions; max improvement +2.92
+  (`pricing_page_ko`). Fine-tune half of the original C3 proposal
+  remains deferred.
+- **WCXB external benchmark integration (`benchmarks/wcxb/`).**
+  One-shot runner against the Murrough-Foley WCXB dev split (1,497
+  pages / 7 page types / 1,613 domains, CC-BY-4.0). Latest numbers:
+  trawl `html_to_markdown` F1 = 0.777 vs in-environment Trafilatura
+  baseline 0.750. Pinned SHA-256 manifest for reproducibility.
 - **VLM profile prompt v2 and mapper noise filter.** The VLM prompt
   now instructs the model to pick mid-paragraph text instead of section
   headings (which duplicate in sidebar TOCs) and explicitly warns about
@@ -18,7 +242,6 @@ not yet follow semver strictly — expect breaking changes before
   prevents LCA collapse to `<body>` when sidebar entries match heading
   text. Profile eval results on 36 diverse sites: success rate 89% to
   92%, IDEAL selectors 10 to 16 (+60%), docs category 67% to 100%.
-  Parity matrix stays 12/12.
 - **Benchmark suite (`benchmarks/`).** trawl vs Jina Reader (r.jina.ai)
   comparison framework with 12 test cases across docs, wiki, news,
   product, QA, finance, and blog categories. Measures latency, token
@@ -81,9 +304,9 @@ not yet follow semver strictly — expect breaking changes before
 | `TRAWL_HYDE_URL` (was `LLAMA_SERVER_URL`) | `http://localhost:8080/v1` | `http://localhost:8082/v1` |
 | `TRAWL_HYDE_MODEL` (was `HYDE_MODEL`) | `gemma-4-26B-A4B-it-Q8_0.gguf` | `gemma-4-E4B-it-Q8_0.gguf` |
 
-No code change to the pipeline or fetchers; the 11/11 parity matrix
-still passes (HyDE is off by default, so the changed defaults only
-matter when a caller explicitly sets `use_hyde=True`).
+No code change to the pipeline or fetchers; the parity matrix still
+passes (HyDE is off by default, so the changed defaults only matter
+when a caller explicitly sets `use_hyde=True`).
 
 
 ## [0.1.0] — 2026-04-10

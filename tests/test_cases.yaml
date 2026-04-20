@@ -1,4 +1,4 @@
-# trawl parity matrix — 12 golden cases.
+# trawl parity matrix — 15 golden cases.
 #
 # Each case has a URL, a free-form `query` (the kind of phrasing a real
 # user would type), and `ground_truth` (facts that MUST appear in the
@@ -13,8 +13,11 @@
 
 cases:
   - id: kbo_schedule
-    description: "KBO 일정 — vocabulary mismatch (쿼리에 팀명 없음)"
-    url: "https://sports.news.naver.com/kbaseball/schedule/index"
+    description: "KBO 일정 — vocabulary mismatch (쿼리에 팀명 없음). URL
+      pins a historical game day (2026-04-19 Sun) so the test is stable
+      on KBO off-days (Mondays, season gaps). Naver keeps archive
+      schedules indefinitely."
+    url: "https://sports.news.naver.com/kbaseball/schedule/index?date=20260419"
     query: "오늘 야구 경기 일정 알려줘"
     expected_phase: 2   # baseline embed should fail; structured detection should rescue
     ground_truth:

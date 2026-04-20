@@ -17,6 +17,37 @@ fetch_relevant(url, query, k=?, use_hyde=?, use_rerank=?)
   │
   ▼
 ┌─────────────────────────────────────────────────┐
+│ 0. Profile fast path (if cached)                │
+│   track_visit(url)                              │
+│   If load_profile(url) returns a profile whose  │
+│   CSS selector matches + verification anchors   │
+│   pass: render via playwright, apply selector,  │
+│   extract subtree, chunk, either return all     │
+│   chunks (small subtree) or retrieve+rerank     │
+│   (large subtree). Skip embedding when <=20     │
+│   chunks. Drift → fall to host-transfer.        │
+│                                                 │
+│ 0b. Profile host-transfer                       │
+│   No exact-URL profile? Scan same-host profiles │
+│   for a selector that matches and whose subtree │
+│   char count is within [0.3x, 3x] of the        │
+│   recorded size. On hit, persist a copy under   │
+│   url_hash(url) for future exact-match fast     │
+│   path. Miss → continue.                        │
+│                                                 │
+│ 0c. Raw passthrough                             │
+│   URL suffix .json / .xml / .rss / .atom ?      │
+│     yes → httpx GET up to TRAWL_PASSTHROUGH_    │
+│           MAX_BYTES (default 256 KB), return    │
+│           body as a single chunk, skip          │
+│           embedding entirely.                   │
+│   Suffix-less? HEAD-probe; if Content-Type is   │
+│   a passthrough type, re-GET raw bytes.         │
+│   On success: return without query requirement. │
+└─────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────┐
 │ 1. Fetch                                        │
 │   URL ends in .pdf / contains /pdf/ ?           │
 │      yes → httpx.get(url) + pymupdf.open()      │
@@ -39,23 +70,35 @@ fetch_relevant(url, query, k=?, use_hyde=?, use_rerank=?)
 │            fallback: playwright if API fails    │
 │      no  → sync_playwright().chromium.launch()  │
 │            (wrapped by playwright-stealth)      │
-│            → goto(url, wait_until=networkidle)  │
+│            → goto(url, domcontentloaded)        │
+│            → _wait_for_content_ready() up to    │
+│              wait_for_ms ceiling (default 5s)   │
 │            → page.content() → HTML string       │
+│   If the rendered Content-Type is JSON/XML/…    │
+│   (Chromium wraps it in a viewer DOM), fall     │
+│   through to passthrough.fetch_raw_body().      │
 └─────────────────────────────────────────────────┘
   │
   ▼
 ┌─────────────────────────────────────────────────┐
 │ 2. Extract (HTML → markdown)                    │
-│   Runs three extractors in parallel mentally:   │
-│     a. Trafilatura favor_precision=True         │
-│     b. Trafilatura favor_recall=True            │
-│     c. BeautifulSoup body.get_text() after      │
-│        stripping <script> <style> <nav> etc.    │
-│   Returns the LONGEST of the three.             │
+│   2a. records.annotate_records(html) first —    │
+│       scan for runs of ≥3 sibling elements with │
+│       identical (tag, class) signatures, inject │
+│       ASCII sentinel lines around each record   │
+│       so the chunker can later keep each one    │
+│       atomic. Noise-region filter (nav /        │
+│       sidebar / tabs) skips false positives.    │
+│   2b. Three extractors run in parallel mentally:│
+│         a. Trafilatura favor_precision=True     │
+│         b. Trafilatura favor_recall=True        │
+│         c. BeautifulSoup body.get_text() after  │
+│            stripping <script> <style> <nav> etc.│
+│       Returns the LONGEST of the three.         │
 │   Reasoning: each extractor excels on a         │
 │   different page type; the longest output is    │
 │   empirically the best proxy for "captured the  │
-│   relevant content" across our 11-case matrix.  │
+│   relevant content" across our 15-case matrix.  │
 └─────────────────────────────────────────────────┘
   │
   ▼
@@ -66,13 +109,16 @@ fetch_relevant(url, query, k=?, use_hyde=?, use_rerank=?)
 │     otherwise        → max_chars=450            │
 │   Split on markdown headings first; each        │
 │   section may be further split if > max_chars.  │
-│   Tables and lists preserved intact. Long       │
-│   single-line inputs (common in PDFs) fall      │
+│   Tables preserved intact. Record sentinels     │
+│   from step 2a keep each repeating record as    │
+│   its own atomic chunk regardless of max_chars. │
+│   Long single-line inputs (common in PDFs) fall │
 │   through to sentence → word → char splitting.  │
 │   Each chunk stores:                            │
 │     .text          the original markdown        │
 │     .embed_text    plain_text() without markup  │
 │     .heading_path  ['Section', 'Subsection']    │
+│     .record_group_id / .record_index  (records) │
 │   Chunks with .embed_text < 20 chars are        │
 │   dropped (pure nav/link boilerplate).          │
 └─────────────────────────────────────────────────┘
@@ -117,8 +163,12 @@ fetch_relevant(url, query, k=?, use_hyde=?, use_rerank=?)
 │ 6. Rerank (default on)                          │
 │   POST top-2k candidates to bge-reranker-v2-m3  │
 │   on localhost:8083/v1/rerank. Cross-encoder     │
-│   rescores each (query, chunk) pair. Return      │
-│   top-k by cross-encoder relevance score.        │
+│   rescores each (query, chunk) pair. Each input  │
+│   is prefixed with `Title: <page_title>\n       │
+│   Section: <heading>\nbody` when a title is      │
+│   available (DeepQSE-style title-injection;      │
+│   toggle via TRAWL_RERANK_INCLUDE_TITLE).        │
+│   Return top-k by cross-encoder relevance score. │
 │   On server failure: log warning, fall back to   │
 │   cosine-ranked top-k from step 5.               │
 │   Adds ~0.5-2s latency per query.                │
@@ -149,14 +199,15 @@ either way.
 
 A follow-up spike built the current selective-extraction approach.
 It passed 4/4 initial cases on a baseline and 11/11 after edge
-cases were added.
+cases were added. The matrix has since grown to 15 cases
+(content-ready wait spike and repeating-record additions).
 
 A final A/B spike tested whether we needed Firecrawl at all if we
 only wanted the markdown. We replaced Firecrawl's Playwright service
 with direct Playwright (+ stealth) and Trafilatura + BeautifulSoup
-for extraction, reached the same 11/11 recall, and eliminated six
-containers of infrastructure. trawl is the packaged form of that
-pipeline.
+for extraction, reached the same 11/11 recall (on what was then the
+full matrix), and eliminated six containers of infrastructure. trawl
+is the packaged form of that pipeline; the matrix is now 15/15.
 
 ### Why three extractors?
 
@@ -244,7 +295,7 @@ It was added in Spike 2 as a safety valve for the vocabulary-mismatch
 case (user asks "오늘 야구 일정", answer chunks contain team names
 only). The baseline retrieval turned out to handle that case fine
 without HyDE, so turning it on by default would just add latency for
-no measurable recall gain on the 11-case matrix.
+no measurable recall gain on the parity matrix.
 
 HyDE stays in the codebase as a callable function. If a future query
 class regresses, it's the first thing to try. Two improvements from
@@ -271,8 +322,11 @@ llama.cpp, different base model). Override via env vars:
 
 ## Measured performance
 
-Baseline on the 11-case matrix (llama-server with bge-m3 on :8081,
-M-series Mac, first run after browser warm-up):
+Baseline on the original 11-case matrix (llama-server with bge-m3 on
+:8081, M-series Mac, first run after browser warm-up). The matrix
+has since grown to 15 cases (content-ready wait spike +
+repeating-record additions); re-measure via `python tests/test_pipeline.py`
+for current numbers.
 
 | Case | Tokens out | Chunks | Compression | Latency | Fetcher |
 |------|-----------:|-------:|------------:|--------:|---|
@@ -345,6 +399,24 @@ Ordered by expected value-per-hour:
 1. **Real-usage feedback loop**. Collect a week of actual queries
    from downstream integrations; identify regression cases the
    12-case matrix misses.
+~~2. **Per-domain adaptive timeout**~~ — **Done (C9, 2026-04-20).**
+   `src/trawl/host_stats.py` tracks the last 50 Playwright fetch
+   durations per hostname. After 5 observations the `fetch()` /
+   `render_session()` wait ceiling switches from the static 5000 ms
+   default to `p95 × 1.5`, clamped to `[1500, 15000] ms`. Disable with
+   `TRAWL_HOST_STATS=0`. Spec:
+   `docs/superpowers/specs/2026-04-20-c9-per-host-ceiling-design.md`.
+~~3. **BM25 hybrid retrieval**~~ — **Done (C6, 2026-04-20, opt-in).**
+   `src/trawl/bm25.py` adds a rule-based multilingual tokenizer + a
+   `rank_bm25.BM25Okapi` wrapper + RRF fusion (`k=60`). Enabled per
+   call with `TRAWL_HYBRID_RETRIEVAL=1`; `ScoredChunk.score` still
+   carries the dense cosine so downstream reranker / telemetry see
+   the same numbers. Parity stays 15/15 in both modes. Default stays
+   off because the 16-pattern `code_heavy_query` A/B saw no assertion
+   regressions but also no assertion wins at `k=60` — tune or flip
+   default once real usage shows a recall gap. Measurement:
+   `notes/c6-hybrid-measurement.md`.
+   15-case matrix misses.
 2. **Per-domain adaptive timeout** on top of the content-ready detector.
    `wait_for_ms=5000` is now the ceiling for content-ready stability
    detection (not a fixed wait — see `_wait_for_content_ready` in
@@ -354,14 +426,20 @@ Ordered by expected value-per-hour:
    a separate index and a way to detect when the query is
    code-shaped; probably more effort than it's worth unless we
    see measurable rank failures from real usage.
-4. **Content-Type detection** for PDFs via HEAD requests, replacing
-   the URL-suffix heuristic.
+~~4. **Content-Type detection** for PDFs via HEAD requests~~ — **Done
+   (C7, 2026-04-19).** `fetchers/pdf.probe(url)` HEAD-pre-probes
+   suffix-less URLs and short-circuits to `pdf.fetch()` when the
+   origin answers `application/pdf`. New `fetcher_used=pdf-probed`
+   value distinguishes the probed path from the suffix-hit path.
 5. **Browser pool** for concurrent fetches. Deferred until there's
    a concrete multi-user deployment that needs it.
-6. **Per-fetch caching** keyed on (url, content_hash) so repeat
-   fetches within a short window avoid the Playwright cost. Note
-   the cache-invalidation subtlety: pages with dynamic content
-   (news, schedules) should expire quickly.
+~~6. **Per-fetch caching**~~ — **Done (C8, 2026-04-20).** Successful
+   HTML/PDF fetches land in `~/.cache/trawl/fetches/<sha256>.json`
+   (300 s default TTL, 100 MB soft cap, mtime-based LRU trim). Repeat
+   visits within TTL skip Playwright + Trafilatura. Chunking /
+   embedding / retrieval still run fresh because they're
+   query-dependent. `PipelineResult.cache_hit` flags the reuse.
+   Disable with `TRAWL_FETCH_CACHE_TTL=0`.
 
 ~~7. **Reranker pass**~~ — **Done.** Cross-encoder reranking via
 bge-reranker-v2-m3 on `:8083` is implemented and on by default.
@@ -428,5 +506,7 @@ trawl is the packaged form of work that lived across three spikes:
    Playwright + Trafilatura + BS, reached parity, and removed six
    containers of infrastructure.
 
-The 12 golden test cases in `tests/test_cases.yaml` originated in
-those spikes and are preserved verbatim.
+The first 12 golden test cases in `tests/test_cases.yaml` originated
+in those spikes and are preserved verbatim; 3 more (repeating-record
+pages for wanted.co.kr, news.hada.io, aladin bestsellers) were added
+in the `feat(records)` PR for the 15-case matrix.

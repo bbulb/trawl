@@ -56,6 +56,7 @@ def _build_event(result: PipelineResult) -> dict:
         "total_ms": result.total_ms,
         "page_chars": result.page_chars,
         "n_chunks_total": result.n_chunks_total,
+        "n_chunks_embedded": result.n_chunks_embedded,
         "error": result.error,
     }
 

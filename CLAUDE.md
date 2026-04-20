@@ -12,13 +12,24 @@ trawl directory. Humans should read `README.md` first, then
 
 ## Current status
 
-- **Version**: 0.1.0 + cross-encoder reranking, env var unification,
-  slot pinning, VLM profile prompt v2.
-- **Parity matrix**: 12/12 cases pass (see `tests/test_cases.yaml`).
+- **Version**: 0.3.0 (2026-04-20). Highlights since the narrow
+  `v0.2.0` tag (raw passthrough / Docker / WCXB, 2026-04-15): C6
+  BM25 hybrid retrieval (opt-in), C7 PDF HEAD probe, C8 per-fetch
+  cache (default on), C9 per-host adaptive ceiling (default on),
+  C16 compositional payload enrichment, longform chunk budget
+  prefilter (opt-in). Full list in `CHANGELOG.md`.
+- **Parity matrix**: 15/15 cases pass (see `tests/test_cases.yaml`).
+  `kbo_schedule` pinned to a historical game day to survive KBO
+  off-days.
 - **Profile eval**: 36-site evaluation — 92% success rate, 16/36 IDEAL
   selectors.
 - **Benchmark vs Jina Reader**: ~23x fewer tokens on average across 12
   cases; profile-cached mode ~30x.
+- **WCXB external benchmark**: trawl `html_to_markdown` F1 = 0.777 vs
+  Trafilatura baseline 0.750 on the 1,497-page dev split.
+- **Longform retrieval cost (opt-in)**: `TRAWL_CHUNK_BUDGET=100` cuts
+  retrieval_ms.p95 69% on 4 longform cases (wiki_history, arxiv_pdf,
+  wiki_llm, korean_wiki_person) with 4/4 rank-1 identity preserved.
 
 ### What a new session should do first
 
@@ -48,7 +59,7 @@ trawl directory. Humans should read `README.md` first, then
   is `pip install -e .`-installed into this env; other envs won't
   have the editable install.
 - **Run the parity matrix before committing any change to `src/trawl/`.**
-  `python tests/test_pipeline.py` must stay 12/12. If a tuning change
+  `python tests/test_pipeline.py` must stay 15/15. If a tuning change
   breaks one case, it's almost certainly breaking something else too —
   diagnose, don't just tighten ground truth.
 - **Run the MCP smoke test before touching `src/trawl_mcp/`.**
@@ -86,6 +97,38 @@ trawl directory. Humans should read `README.md` first, then
     (override via `TRAWL_TELEMETRY_PATH`). Single-generation rotation
     at 64 MB. Purpose: feed the C4 decision in `notes/RESEARCH.md`.
     Schema: `src/trawl/telemetry.py` + the C4 spec doc.
+  - **Per-fetch cache** (C8, default on) — successful HTML/PDF fetches
+    are cached in `~/.cache/trawl/fetches/<sha256>.json` for 300 s.
+    Re-fetch of the same URL within TTL skips Playwright +
+    Trafilatura; chunking / embedding / retrieval still run fresh.
+    Disable via `TRAWL_FETCH_CACHE_TTL=0`; relocate via
+    `TRAWL_FETCH_CACHE_PATH`; size cap via `TRAWL_FETCH_CACHE_MAX_MB`
+    (default 100). `PipelineResult.cache_hit` flags the reuse.
+  - **Per-host adaptive ceiling** (C9, default on) — Playwright's
+    content-ready wait ceiling becomes `p95(host) × 1.5` once 5
+    observations accumulate, clamped to `[1500, 15000] ms`. New hosts
+    use the static 5000 ms default. Stats in
+    `~/.cache/trawl/host_stats.json`. Disable via `TRAWL_HOST_STATS=0`.
+  - **Hybrid dense + BM25 retrieval** (C6, **default off**, opt-in) —
+    `TRAWL_HYBRID_RETRIEVAL=1` enables BM25 lexical ranking alongside
+    dense cosine, fused via Reciprocal Rank Fusion (`k=60`). Tokenizer
+    is rule-based multilingual (Latin word / Hangul bigram / CJK char)
+    in `src/trawl/bm25.py`. Reranker window unchanged (2x candidates).
+    Baseline parity (15/15) preserved in both modes; RRF at k=60 was
+    conservative in the `code_heavy_query` A/B measurement (no content
+    regression, no assertion wins). Tune via `TRAWL_HYBRID_RRF_K`
+    (default 60). See `notes/c6-hybrid-measurement.md` for A/B results.
+  - **Chunk budget prefilter** (longform follow-up, **default off**,
+    opt-in) — `TRAWL_CHUNK_BUDGET=100` (or any positive int) caps the
+    pool sent to bge-m3. When a page's chunk count exceeds the budget,
+    the BM25 scorer from C6 ranks the chunks and only the top-N reach
+    the embedding stage; reranker input window unchanged. Reuses the
+    C6 tokenizer, so the flag stacks with `TRAWL_HYBRID_RETRIEVAL=1`.
+    Measurement at budget=100 on 4 longform cases cuts overall
+    retrieval_ms.p95 from 6,002 ms to 1,890 ms (69%) with 4/4 rank-1
+    identity preserved. `PipelineResult.n_chunks_embedded` reports the
+    post-prefilter count. See
+    `docs/superpowers/specs/2026-04-20-longform-retrieval-cost-design.md`.
 
 ## Quick Reference
 
@@ -98,7 +141,7 @@ mamba env create -f environment.yml
 mamba run -n trawl playwright install chromium
 mamba activate trawl
 
-# Parity matrix: 12 cases, non-zero exit on regression
+# Parity matrix: 15 cases, non-zero exit on regression
 python tests/test_pipeline.py
 
 # Single case, verbose
@@ -106,6 +149,11 @@ python tests/test_pipeline.py --only kbo_schedule --verbose
 
 # With HyDE enabled (adds ~15-20s, rarely useful)
 python tests/test_pipeline.py --hyde
+
+# Agent usage pattern matrix (workflow-shape regressions for openclaw/hermes/Claude Code)
+python tests/test_agent_patterns.py --dry-run                    # schema only
+python tests/test_agent_patterns.py --shard coding               # one shard
+python tests/test_agent_patterns.py --only <pattern_id> --verbose
 
 # MCP server smoke test
 python tests/test_mcp_server.py
@@ -155,26 +203,39 @@ src/trawl/                       library — the pipeline
   reranking.py                   bge-reranker-v2-m3 cross-encoder rerank
   extraction.py                  Trafilatura (precise+recall) + BS fallback
   hyde.py                        optional query expansion (off by default)
+  records.py                     repeating-sibling record detection + sentinels
+  reranking.py                   bge-reranker-v2-m3 cross-encoder (title-injection)
+  telemetry.py                   opt-in JSONL telemetry collector
   profiles/                      VLM-based page profiling
     prompts.py                   VLM prompt (v2: anti-sidebar anchor guidance)
     mapper.py                    anchor→DOM→LCA→CSS selector (noise filter)
     vlm.py                       llama-server VLM client
     profile.py                   profile load/save/cache
+    cache.py                     per-host profile lookup for host-transfer
   fetchers/
-    playwright.py                sync_playwright + stealth, shared browser
+    playwright.py                sync_playwright + stealth, content-ready wait
     pdf.py                       httpx + pymupdf
+    passthrough.py               raw JSON/XML/RSS/Atom pass-through (httpx)
     youtube.py                   youtube_transcript_api + playwright fallback
     github.py                    GitHub REST API + playwright fallback
     stackexchange.py             Stack Exchange API v2.3 + playwright fallback
     wikipedia.py                 MediaWiki parse API + playwright fallback
 
-src/trawl_mcp/                   MCP stdio server wrapper
+src/trawl_mcp/                   MCP server wrapper (stdio default, --http opt-in)
   server.py                      list_tools / call_tool handlers
-  __main__.py                    `python -m trawl_mcp` entry
+  http.py                        streamable-HTTP transport (--http)
+  __main__.py                    `python -m trawl_mcp [--http [HOST:PORT]]`
 
 tests/
-  test_cases.yaml                12 golden cases
+  test_cases.yaml                12 golden cases (extraction-quality parity)
+  test_cases.yaml                15 golden cases (extraction-quality parity)
   test_pipeline.py               parity runner — compares against ground truth
+  test_agent_patterns.py         agent workflow harness (single/repeat/host-transfer/compositional)
+  agent_patterns/                pattern catalog (one yaml per shard)
+    schema.py                      dataclass + YAML validator
+    loader.py                      shard loader + ID dedupe
+    coding.yaml                    coding-assistant patterns (~25)
+    README.md                      catalog rules + assertion DSL ref
   test_mcp_server.py             stdio protocol smoke test
   results/                       gitignored test outputs
 
@@ -224,9 +285,10 @@ change them, run `tests/test_pipeline.py` before AND after.
 | `chunking.MIN_PLAIN_CHARS` | `20` | Smaller → keeps noise; larger → drops useful short chunks |
 | `retrieval.EMBEDDING_BATCH` | `64` | Requires llama-server `--ubatch-size ≥ 2048` |
 | `retrieval.MAX_EMBED_INPUT_CHARS` | `1800` | Safety net for the same ubatch ceiling |
-| `fetchers/playwright.py wait_for_ms` | `5000` | Ceiling (not fixed wait) for the content-ready detector. Fast pages exit sub-2s; SPAs that never stabilize fall back to this ceiling. Change requires re-running the parity matrix. |
+| `fetchers/playwright.py wait_for_ms` | `5000` | Fallback ceiling (not fixed wait) for the content-ready detector on brand-new hosts. C9's `host_stats` takes over once a host has ≥ 5 observations, replacing this with `p95 × 1.5` clamped to `[1500, 15000] ms`. Set `TRAWL_HOST_STATS=0` to revert to the static 5000 ms. Change requires re-running the parity matrix. |
+| `host_stats.py` (WINDOW_SIZE, MIN_OBSERVATIONS, CEILING_MULTIPLIER, MIN_CEILING_MS, MAX_CEILING_MS) | `50, 5, 1.5, 1500, 15000` | Per-host adaptive ceiling bounds. Not env-configurable — retuning should go through a data-driven spike and a CHANGELOG entry. |
 | `fetchers/playwright.py NETWORKIDLE_BUDGET_MS` | `3000` | Max time to wait for `networkidle` before falling back to `domcontentloaded`. Discourse/chat SPAs hold websockets so networkidle never fires — short budget + content-ready detector gives same HTML much faster (telemetry: NVIDIA forum 17s → 4.4s). Raising it re-introduces the regression. |
-| `fetchers/playwright.py` content-ready predicate | `stableTicks >= 4`, `polling=150ms`, `len > 100`, placeholder regex | Empirically tuned on the 12-case parity matrix for a 67% avg fetch_ms reduction. Tightening the window or raising `len` can regress fast/short pages. |
+| `fetchers/playwright.py` content-ready predicate | `stableTicks >= 4`, `polling=150ms`, `len > 100`, placeholder regex | Empirically tuned on the parity matrix for a 67% avg fetch_ms reduction. Tightening the window or raising `len` can regress fast/short pages. |
 | `extraction.py` three-way max (precise, recall, bs) | order matters | Pricing pages need BS; articles need precise |
 | `hyde.py DEFAULT_LLAMA_URL` | `:8082` | Utility LLM, not main LLM — slot contention risk on :8080 |
 | `hyde.py chat_template_kwargs.enable_thinking` | `False` | Without it Gemma 4 burns all tokens on reasoning and returns empty content |

@@ -17,10 +17,10 @@ from __future__ import annotations
 import logging
 import os
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from urllib.parse import urlsplit
 
-from . import chunking, extraction, hyde, reranking, retrieval, telemetry
+from . import chunking, enrichment, extraction, fetch_cache, hyde, reranking, retrieval, telemetry
 from .fetchers import github, passthrough, pdf, playwright, stackexchange, wikipedia, youtube
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,15 @@ PROFILE_TRANSFER_MAX_RATIO = float(
 )
 
 
+def _read_chunk_budget() -> int:
+    """Read `TRAWL_CHUNK_BUDGET` at call time; treat malformed input as disabled."""
+    raw = os.environ.get("TRAWL_CHUNK_BUDGET", "0")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 0
+
+
 @dataclass
 class PipelineResult:
     url: str
@@ -80,6 +89,23 @@ class PipelineResult:
     content_type: str | None = None
     truncated: bool = False
     page_title: str = ""
+    # C16 — compositional payload enrichment. All four fields populate
+    # from `src/trawl/enrichment.py` (no LLM, no network) so agents can
+    # chain follow-up fetches without re-parsing markdown. See
+    # docs/superpowers/specs/2026-04-19-c16-compositional-payload-design.md.
+    excerpts: list[dict] = field(default_factory=list)
+    outbound_links: list[dict] = field(default_factory=list)
+    page_entities: list[str] = field(default_factory=list)
+    chain_hints: dict = field(default_factory=dict)
+    # C8 — per-fetch cache hit indicator. Default False; set True when
+    # the full pipeline path resumed from a cached fetch. See
+    # docs/superpowers/specs/2026-04-20-c8-per-fetch-cache-design.md.
+    cache_hit: bool = False
+    # Longform retrieval cost (2026-04-20) — chunks that survived the
+    # BM25 prefilter and were actually sent to the embedding server.
+    # Equals `n_chunks_total` when `TRAWL_CHUNK_BUDGET` is unset or the
+    # pool was already under budget. 0 for error / passthrough paths.
+    n_chunks_embedded: int = 0
 
     @property
     def output_chars(self) -> int:
@@ -336,6 +362,7 @@ def _build_profile_result(
     }
 
     rerank_ms = 0
+    n_chunks_embedded = 0
     if len(chunks) <= PROFILE_DIRECT_CHUNK_THRESHOLD:
         path = "profile_direct"
         retrieved_dicts = [_chunk_to_dict(c, score=None) for c in chunks]
@@ -345,8 +372,13 @@ def _build_profile_result(
         t_ret = time.monotonic()
         chosen_k = _adaptive_k(len(chunks), override=k)
         retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
-        retrieved = retrieval.retrieve(query, chunks, k=retrieve_k)
+        hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "0") == "1"
+        chunk_budget = _read_chunk_budget()
+        retrieved = retrieval.retrieve(
+            query, chunks, k=retrieve_k, hybrid=hybrid_flag, chunk_budget=chunk_budget
+        )
         retrieval_ms = int((time.monotonic() - t_ret) * 1000)
+        n_chunks_embedded = retrieved.n_chunks_embedded
         if retrieved.error:
             return PipelineResult(
                 **base_kwargs,
@@ -355,6 +387,7 @@ def _build_profile_result(
                 chunks=[],
                 error=retrieved.error,
                 path=path,
+                n_chunks_embedded=retrieved.n_chunks_embedded,
             )
         if use_rerank and retrieved.scored:
             t_rr = time.monotonic()
@@ -365,10 +398,16 @@ def _build_profile_result(
         else:
             final_scored = retrieved.scored
         retrieved_dicts = [_chunk_to_dict(s.chunk, score=s.score) for s in final_scored]
+        emitted_chunks = [s.chunk for s in final_scored]
     else:
         path = "profile_direct_large"
         retrieved_dicts = [_chunk_to_dict(c, score=None) for c in chunks]
         retrieval_ms = 0
+        emitted_chunks = list(chunks)
+
+    if path == "profile_direct":
+        # Direct path returned all chunks above; mirror them for enrichment.
+        emitted_chunks = list(chunks)
 
     return PipelineResult(
         **base_kwargs,
@@ -378,6 +417,13 @@ def _build_profile_result(
         path=path,
         rerank_used=use_rerank and path == "profile_retrieval",
         rerank_ms=rerank_ms,
+        excerpts=enrichment.extract_excerpts(emitted_chunks),
+        outbound_links=enrichment.extract_outbound_links(emitted_chunks),
+        page_entities=enrichment.extract_page_entities(
+            page_title, [getattr(c, "heading_path", []) for c in emitted_chunks]
+        ),
+        chain_hints=enrichment.derive_chain_hints(url),
+        n_chunks_embedded=n_chunks_embedded,
     )
 
 
@@ -730,66 +776,105 @@ def _run_full_pipeline(
     t_start: float,
 ) -> PipelineResult:
     """Non-profile pipeline: fetch → extract → chunk → (HyDE) → retrieve → rerank."""
-    # 1. Fetch → markdown (or short-circuit for PDF / passthrough)
-    if _is_pdf_url(url):
-        fetched = pdf.fetch(url)
-        markdown = fetched.markdown
-        fetcher_name = "pdf"
-    else:
-        pt_result = _try_passthrough(url, query, t_start)
-        if pt_result is not None:
-            return pt_result
-        fetched, markdown, fetcher_name = _fetch_html(url)
+    # 1. Fetch → markdown (or short-circuit for PDF / passthrough).
+    # C8: try the per-URL fetch cache first. Hit reuses pre-computed
+    # markdown + page_title so Playwright/Trafilatura are skipped;
+    # chunking / embedding / retrieval still run fresh because they're
+    # query-dependent.
+    cached = fetch_cache.get(url)
+    cache_hit = cached is not None
+    fetch_elapsed_ms = 0
+    content_type: str | None = None
+    fetched_html = ""
 
-    # 1b. Playwright-path post-detection passthrough. When a suffix-less
-    # URL returns JSON/XML, Chromium wraps it in a viewer DOM — so we
-    # discard the rendered HTML and re-fetch the raw bytes via httpx.
-    ct = getattr(fetched, "content_type", None)
-    if passthrough.is_passthrough_content_type(ct):
-        pt = passthrough.fetch_raw_body(url)
-        if pt.ok:
-            return _build_passthrough_result(
+    if cache_hit:
+        markdown = cached.markdown
+        page_title = cached.page_title
+        fetcher_name = cached.fetcher_used
+        content_type = cached.content_type
+    else:
+        if _is_pdf_url(url):
+            fetched = pdf.fetch(url)
+            markdown = fetched.markdown
+            fetcher_name = "pdf"
+        else:
+            pt_result = _try_passthrough(url, query, t_start)
+            if pt_result is not None:
+                return pt_result
+            # C7: HEAD probe for suffix-less PDFs (download links, redirects).
+            # Mirrors the passthrough.probe pattern: small HEAD lets us catch
+            # `application/pdf` Content-Type before paying for a Playwright
+            # render that would only return PDF viewer chrome. Probe failure
+            # is silent — fall through to the existing HTML path.
+            if pdf.probe(url):
+                fetched = pdf.fetch(url)
+                markdown = fetched.markdown
+                fetcher_name = "pdf-probed"
+            else:
+                fetched, markdown, fetcher_name = _fetch_html(url)
+
+        # 1b. Playwright-path post-detection passthrough. When a suffix-less
+        # URL returns JSON/XML, Chromium wraps it in a viewer DOM — so we
+        # discard the rendered HTML and re-fetch the raw bytes via httpx.
+        ct = getattr(fetched, "content_type", None)
+        if passthrough.is_passthrough_content_type(ct):
+            pt = passthrough.fetch_raw_body(url)
+            if pt.ok:
+                return _build_passthrough_result(
+                    url,
+                    query,
+                    body=pt.raw_bytes,
+                    content_type=ct or pt.content_type,
+                    fetcher_name="playwright+passthrough",
+                    t_start=t_start,
+                    fetch_ms=fetched.elapsed_ms + pt.elapsed_ms,
+                    truncated=pt.truncated,
+                )
+            return _error_result(
+                url,
+                query or "",
+                f"passthrough raw body fetch failed: {pt.error}",
+                t_start,
+                fetcher_used="playwright+passthrough",
+                fetch_ms=fetched.elapsed_ms + pt.elapsed_ms,
+                page_chars=0,
+                path="raw_passthrough",
+                content_type=ct,
+            )
+
+        if not fetched.ok or not markdown:
+            return _error_result(
                 url,
                 query,
-                body=pt.raw_bytes,
-                content_type=ct or pt.content_type,
-                fetcher_name="playwright+passthrough",
-                t_start=t_start,
-                fetch_ms=fetched.elapsed_ms + pt.elapsed_ms,
-                truncated=pt.truncated,
+                fetched.error or "empty markdown after extraction",
+                t_start,
+                fetcher_used=fetcher_name,
+                fetch_ms=fetched.elapsed_ms,
+                page_chars=len(markdown),
             )
-        return _error_result(
-            url,
-            query or "",
-            f"passthrough raw body fetch failed: {pt.error}",
-            t_start,
-            fetcher_used="playwright+passthrough",
-            fetch_ms=fetched.elapsed_ms + pt.elapsed_ms,
-            page_chars=0,
-            path="raw_passthrough",
-            content_type=ct,
-        )
 
-    if not fetched.ok or not markdown:
-        return _error_result(
-            url,
-            query,
-            fetched.error or "empty markdown after extraction",
-            t_start,
-            fetcher_used=fetcher_name,
-            fetch_ms=fetched.elapsed_ms,
-            page_chars=len(markdown),
+        fetch_elapsed_ms = fetched.elapsed_ms
+        content_type = ct
+        fetched_html = getattr(fetched, "html", "") or ""
+        page_title = extraction.extract_title(html=fetched_html, markdown=markdown)
+        # Populate the cache for next time. Only successful HTML/PDF
+        # fetches land here (error/passthrough branches already returned).
+        fetch_cache.put(
+            fetch_cache.CachedFetch(
+                url=url,
+                markdown=markdown,
+                page_title=page_title,
+                fetcher_used=fetcher_name,
+                content_type=content_type,
+                cached_at=time.time(),
+                fetch_elapsed_ms=fetch_elapsed_ms,
+            )
         )
 
     # 2. Chunk
     t_chunk = time.monotonic()
     chunks = chunking.chunk_markdown(markdown)
     chunk_ms = int((time.monotonic() - t_chunk) * 1000)
-
-    page_title = extraction.extract_title(
-        html=getattr(fetched, "html", "") or "",
-        markdown=markdown,
-    )
 
     # 3. Optional HyDE
     extras: list[str] = []
@@ -802,7 +887,16 @@ def _run_full_pipeline(
     # 4. Retrieve + rerank
     chosen_k = _adaptive_k(len(chunks), override=k)
     retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
-    retrieved = retrieval.retrieve(query, chunks, k=retrieve_k, extra_query_texts=extras)
+    hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "0") == "1"
+    chunk_budget = _read_chunk_budget()
+    retrieved = retrieval.retrieve(
+        query,
+        chunks,
+        k=retrieve_k,
+        extra_query_texts=extras,
+        hybrid=hybrid_flag,
+        chunk_budget=chunk_budget,
+    )
     if retrieved.error:
         return _error_result(
             url,
@@ -810,13 +904,14 @@ def _run_full_pipeline(
             retrieved.error,
             t_start,
             fetcher_used=fetcher_name,
-            fetch_ms=fetched.elapsed_ms,
+            fetch_ms=fetch_elapsed_ms,
             chunk_ms=chunk_ms,
             retrieval_ms=retrieved.elapsed_ms,
             page_chars=len(markdown),
             n_chunks_total=len(chunks),
             hyde_used=use_hyde,
             hyde_text=hyde_text,
+            n_chunks_embedded=retrieved.n_chunks_embedded,
         )
 
     rerank_ms = 0
@@ -827,11 +922,12 @@ def _run_full_pipeline(
     else:
         final_scored = retrieved.scored
 
+    emitted_chunks = [s.chunk for s in final_scored]
     return PipelineResult(
         url=url,
         query=query,
         fetcher_used=fetcher_name,
-        fetch_ms=fetched.elapsed_ms,
+        fetch_ms=fetch_elapsed_ms,
         chunk_ms=chunk_ms,
         retrieval_ms=retrieved.elapsed_ms,
         total_ms=int((time.monotonic() - t_start) * 1000),
@@ -840,11 +936,23 @@ def _run_full_pipeline(
         structured_path=False,
         hyde_used=use_hyde,
         hyde_text=hyde_text,
-        chunks=[_chunk_to_dict(s.chunk, score=s.score) for s in final_scored],
+        chunks=[
+            _chunk_to_dict(c, score=s.score)
+            for c, s in zip(emitted_chunks, final_scored, strict=True)
+        ],
+        excerpts=enrichment.extract_excerpts(emitted_chunks),
+        outbound_links=enrichment.extract_outbound_links(emitted_chunks),
+        page_entities=enrichment.extract_page_entities(
+            page_title, [getattr(c, "heading_path", []) for c in emitted_chunks]
+        ),
+        chain_hints=enrichment.derive_chain_hints(url),
         path="full_page_retrieval",
         rerank_used=use_rerank,
         rerank_ms=rerank_ms,
         page_title=page_title,
+        content_type=content_type,
+        cache_hit=cache_hit,
+        n_chunks_embedded=retrieved.n_chunks_embedded,
     )
 
 

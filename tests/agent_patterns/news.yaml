@@ -1,0 +1,215 @@
+# shard: news — 시사·뉴스 소비 패턴.
+#
+# 한국·영어 주류 매체와 aggregator 페이지를 모두 포함. 한국 사이트는
+# Cloudflare 보호 없는 곳 위주로 선정 (CF Turnstile은 trawl scope 외).
+# 헤드라인 리스트 페이지는 records.py가 작동하는지 검증하는 용도도 겸함.
+
+patterns:
+  # ============================================================
+  # 한국 주류 매체 (5)
+  # ============================================================
+
+  - id: openclaw_naver_news_topic
+    primary_agent: [openclaw, claude_code]
+    category: single_fetch
+    description: "네이버 뉴스 정치 섹션 — 헤드라인 + 요약"
+    url: "https://news.naver.com/section/100"
+    query: "오늘 정치 주요 뉴스"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: openclaw_chosun_main
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "조선일보 메인 — 사회면 헤드라인"
+    url: "https://www.chosun.com/national/"
+    query: "최근 사회 이슈"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: openclaw_hankyoreh_society
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "한겨레 사회 — 진보 매체 비교"
+    url: "https://www.hani.co.kr/arti/society/"
+    query: "오늘 사회 이슈"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: openclaw_yna_breaking
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "연합뉴스 속보 페이지"
+    url: "https://www.yna.co.kr/news/0"
+    query: "오늘 속보"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: openclaw_joongang_main
+    primary_agent: [openclaw]
+    category: single_fetch
+    description: "중앙일보 메인 페이지"
+    url: "https://www.joongang.co.kr/"
+    query: "오늘 주요 뉴스 헤드라인"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  # ============================================================
+  # 영어 주류 매체 (5)
+  # ============================================================
+
+  - id: hermes_bbc_news_world
+    primary_agent: [hermes, claude_code]
+    category: single_fetch
+    description: "BBC News World — 국제 뉴스"
+    url: "https://www.bbc.com/news/world"
+    query: "today's top international news"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 14000
+
+  - id: hermes_reuters_world
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "Reuters World — 통신사 톤"
+    url: "https://www.reuters.com/world/"
+    query: "latest world news"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: hermes_apnews_world
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "Associated Press — wire 서비스"
+    url: "https://apnews.com/world-news"
+    query: "today's wire stories"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: hermes_guardian_us
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "The Guardian US news"
+    url: "https://www.theguardian.com/us-news"
+    query: "today's US politics news"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  - id: hermes_nyt_section_world
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "NYT World — paywalled headlines + previews"
+    url: "https://www.nytimes.com/section/world"
+    query: "world news headlines today"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 2"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+
+  # ============================================================
+  # Aggregator / community (5)
+  # ============================================================
+
+  - id: hermes_hn_front_page
+    primary_agent: [hermes, claude_code]
+    category: single_fetch
+    description: "Hacker News front page — 가장 자주 체크하는 dev community"
+    url: "https://news.ycombinator.com/"
+    query: "today's top tech stories on hacker news"
+    live: required
+    assertions:
+      chunks_contain_any: ["points by", "comment"]
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 12000
+
+  - id: hermes_hn_newest
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "Hacker News newest — 신규 submission"
+    url: "https://news.ycombinator.com/newest"
+    query: "newest submissions"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 12000
+
+  - id: hermes_lobsters_front
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "lobste.rs — 큐레이션 dev 포럼"
+    url: "https://lobste.rs/"
+    query: "today's top stories"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 12000
+
+  - id: openclaw_news_hada_io
+    primary_agent: [openclaw, claude_code]
+    category: single_fetch
+    description: "뉴스해다 메인 — 한국 dev/startup aggregator"
+    url: "https://news.hada.io/"
+    query: "최근 IT 스타트업 뉴스"
+    live: required
+    assertions:
+      chunks_contain_any: ["points by", "댓글"]
+      n_chunks_returned: ">= 5"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 12000
+
+  - id: hermes_techcrunch_main
+    primary_agent: [hermes]
+    category: single_fetch
+    description: "TechCrunch main — VC + product launches"
+    url: "https://techcrunch.com/"
+    query: "today's startup and product news"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 3"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
