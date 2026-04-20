@@ -7,6 +7,23 @@ not yet follow semver strictly — expect breaking changes before
 
 ## [Unreleased]
 
+_No changes yet._
+
+## [0.2.0] — 2026-04-20
+
+Second tagged release. Packs up the six C-series follow-ups and the
+longform retrieval cost spike that landed between 2026-04-10 and
+2026-04-20.
+
+Headline work: opt-in longform chunk budget (C5 follow-up, ~69%
+retrieval p95 reduction on wiki / arxiv pages), opt-in BM25 hybrid
+retrieval (C6), per-fetch result cache (C8, default on), per-host
+adaptive content-ready ceiling (C9, default on), C7 PDF HEAD probe,
+C16 compositional payload enrichment, agent-patterns harness shard
+groundwork, and assorted lint / stack-merge cleanup.
+
+Per-feature detail below.
+
 ### Added
 
 - **Longform retrieval cost — chunk budget + BM25 prefilter (opt-in).**
