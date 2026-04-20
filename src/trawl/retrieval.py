@@ -111,9 +111,7 @@ def retrieve(
     # carries strong topical signal ("명량 해전" header tells the
     # embedding what the section is about even before the body).
     chunk_texts = [
-        (c.heading + "\n\n" + (c.embed_text or c.text))
-        if c.heading
-        else (c.embed_text or c.text)
+        (c.heading + "\n\n" + (c.embed_text or c.text)) if c.heading else (c.embed_text or c.text)
         for c in chunks
     ]
 

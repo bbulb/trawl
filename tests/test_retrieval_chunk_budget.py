@@ -130,9 +130,7 @@ def test_budget_with_hybrid_shares_filtered_pool(monkeypatch):
     stub, state = _recording_embed_factory(q, lambda t: [1.0, 0.0])
     monkeypatch.setattr(retrieval, "_embed_batch", stub)
 
-    result = retrieval.retrieve(
-        "alpha", chunks, k=3, hybrid=True, chunk_budget=3
-    )
+    result = retrieval.retrieve("alpha", chunks, k=3, hybrid=True, chunk_budget=3)
     assert result.n_chunks_embedded == 3
     # Only 3 survivors embedded, even with hybrid=True.
     assert len(state["doc_texts_seen"]) == 3
