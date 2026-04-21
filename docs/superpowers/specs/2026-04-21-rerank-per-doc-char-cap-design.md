@@ -238,6 +238,21 @@ predicate.
   drop default to ~1500 chars or less. Document in the design's
   followup section if observed.
 
+  **Validation (2026-04-21)**: `D-VALIDATE`. Separate spike
+  `spike/cjk-per-doc-cap-validation` measured two CJK fixtures
+  (Korean Wikipedia 이순신, Japanese Wikipedia 寿司) with cap at
+  default 1500. 200 replays per fixture, 0 / 400 failures (both
+  fixtures 0.0% failure rate). Longest chunks observed: Korean 311
+  chars (≈ 207 tokens), Japanese 321 chars (≈ 214 tokens). The
+  chunker's 450-char target combined with denser CJK sentence
+  boundaries keeps CJK docs well under the cap's boundary regime
+  — the 1500 cap is effectively inert on CJK prose. Design doc +
+  runner: `docs/superpowers/specs/2026-04-21-cjk-per-doc-cap-validation-design.md`,
+  `benchmarks/cjk_per_doc_cap_validation.py`. Caveats: two-fixture
+  scope, Chinese not measured, chunker coupling noted in outcome.
+  If `rerank_capped` telemetry (PR #40) ever spikes on CJK pages in
+  production, revisit.
+
 ## Timing
 
 Implementation 15 min, tests 20 min, validation runs 30 min,
