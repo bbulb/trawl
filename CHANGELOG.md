@@ -7,6 +7,19 @@ not yet follow semver strictly — expect breaking changes before
 
 ## [Unreleased]
 
+### Changed
+
+- **`TRAWL_CHUNK_BUDGET` default flipped from `0` (disabled) to `100`
+  (enabled)** — completes future-work item #4 in the original
+  longform-retrieval-cost design. Triggered by `claude_code_man_curl_options`
+  regression (curl.se manpage, 275 KB / 760 chunks): p95 **25149 → 3065
+  ms (88% reduction)** under the new default, with `chunks=12` assertion
+  unchanged. Pre-registered gate re-measured on the new default: parity
+  15/15, agent_patterns coding 23/24 (the 1 fail is pre-existing
+  `arxiv_pdf_lora` fetcher fail, unrelated to chunk budget). Opt out via
+  `TRAWL_CHUNK_BUDGET=0`. Design doc:
+  `docs/superpowers/specs/2026-04-22-chunk-budget-default-on-design.md`.
+
 ### Research (no code change, shipped as reusable runner + design doc)
 
 - **CJK per-doc cap validation — D-VALIDATE** (PR #45). New

@@ -29,9 +29,11 @@ trawl directory. Humans should read `README.md` first, then
   cases; profile-cached mode ~30x.
 - **WCXB external benchmark**: trawl `html_to_markdown` F1 = 0.777 vs
   Trafilatura baseline 0.750 on the 1,497-page dev split.
-- **Longform retrieval cost (opt-in)**: `TRAWL_CHUNK_BUDGET=100` cuts
-  retrieval_ms.p95 69% on 4 longform cases (wiki_history, arxiv_pdf,
-  wiki_llm, korean_wiki_person) with 4/4 rank-1 identity preserved.
+- **Longform retrieval cost (default on, 2026-04-22)**: `TRAWL_CHUNK_BUDGET`
+  default flipped from `0` to `100` after re-validating on curl.se
+  manpage (275 KB / 760 chunks, p95 25149 ms → 3065 ms). Parity 15/15
+  + agent_patterns coding 23/24 (pre-existing unrelated `arxiv_pdf_lora`
+  fetcher fail) preserved. Opt out via `TRAWL_CHUNK_BUDGET=0`.
 
 ### What a new session should do first
 
@@ -120,17 +122,21 @@ trawl directory. Humans should read `README.md` first, then
     conservative in the `code_heavy_query` A/B measurement (no content
     regression, no assertion wins). Tune via `TRAWL_HYBRID_RRF_K`
     (default 60). See `notes/c6-hybrid-measurement.md` for A/B results.
-  - **Chunk budget prefilter** (longform follow-up, **default off**,
-    opt-in) — `TRAWL_CHUNK_BUDGET=100` (or any positive int) caps the
+  - **Chunk budget prefilter** (longform follow-up, **default on since
+    2026-04-22**, opt-out via `TRAWL_CHUNK_BUDGET=0`) —
+    `TRAWL_CHUNK_BUDGET=100` is the default; any positive int caps the
     pool sent to bge-m3. When a page's chunk count exceeds the budget,
     the BM25 scorer from C6 ranks the chunks and only the top-N reach
     the embedding stage; reranker input window unchanged. Reuses the
     C6 tokenizer, so the flag stacks with `TRAWL_HYBRID_RETRIEVAL=1`.
-    Measurement at budget=100 on 4 longform cases cuts overall
+    Original measurement at budget=100 on 4 longform cases cut
     retrieval_ms.p95 from 6,002 ms to 1,890 ms (69%) with 4/4 rank-1
-    identity preserved. `PipelineResult.n_chunks_embedded` reports the
-    post-prefilter count. See
-    `docs/superpowers/specs/2026-04-20-longform-retrieval-cost-design.md`.
+    identity preserved. Re-validated 2026-04-22 on curl.se manpage
+    (p95 25149 ms → 3065 ms) and full parity + coding agent_patterns
+    (15/15, 23/24 baseline preserved). `PipelineResult.n_chunks_embedded`
+    reports the post-prefilter count. See
+    `docs/superpowers/specs/2026-04-20-longform-retrieval-cost-design.md`
+    and `docs/superpowers/specs/2026-04-22-chunk-budget-default-on-design.md`.
   - **Shadow-DOM unwrap for code-block custom elements** (default on)
     — `fetchers/playwright.py` inlines each matching element's
     `shadowRoot`'s `pre > code` textContent (wrapped in a fresh
