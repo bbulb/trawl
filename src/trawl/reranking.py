@@ -35,8 +35,20 @@ HTTP_TIMEOUT_S = 30.0
 # length ~1500 chars ~= 36 000 chars) stays inside, so the caps do not
 # bite in the parity / code_heavy_query tests. They exist to prevent
 # regressions from future tuning changes or unexpected external callers.
+#
+# DEFAULT_MAX_PER_DOC_CHARS additionally guards against the per-document
+# 512-token batch limit on bge-reranker-v2-m3 (PR #41 D2 outcome). The
+# server's `--ubatch-size 512` rejects any single document tokenising to
+# > 512 tokens with HTTP 500. Empirical bracket on the captured MDN
+# Fetch_API payload (2026-04-21): cap=1500 PASS, cap=1550 FAIL (the
+# 1545-char 2nd-longest doc tokenises to ~515 tokens). 1500 sits on the
+# safe side with a small margin (~430 tokens at the observed
+# code-heavy 3.0-3.5 chars/token ratio). Note: pure CJK content
+# tokenises at ~1-2 chars/token; a 1500-char Korean/Japanese doc could
+# still exceed 512. If that materialises in production, drop to ~1000.
 DEFAULT_MAX_DOCS = 30
 DEFAULT_MAX_CHARS = 40000
+DEFAULT_MAX_PER_DOC_CHARS = 1500
 # Minimum per-doc budget retained when proportional truncation fires.
 # Anything shorter than this provides no useful signal to the reranker.
 MIN_PER_DOC_CHARS = 200
@@ -65,6 +77,22 @@ def _max_chars_env() -> int:
     return v
 
 
+def _max_per_doc_chars_env() -> int:
+    """Per-document character cap enforced before the total-chars cap.
+    ``<= 0`` disables. Defends against the per-doc 512-token batch limit
+    on the reranker server (PR #41 D2 outcome)."""
+    try:
+        v = int(
+            os.environ.get(
+                "TRAWL_RERANK_MAX_PER_DOC_CHARS",
+                str(DEFAULT_MAX_PER_DOC_CHARS),
+            )
+        )
+    except ValueError:
+        return DEFAULT_MAX_PER_DOC_CHARS
+    return v
+
+
 def _apply_caps(
     query: str,
     scored: list[ScoredChunk],
@@ -78,6 +106,7 @@ def _apply_caps(
     back to the source chunks.
     """
     max_docs = _max_docs_env()
+    max_per_doc = _max_per_doc_chars_env()
     max_chars = _max_chars_env()
 
     pre_docs = len(documents)
@@ -89,6 +118,13 @@ def _apply_caps(
     if max_docs > 0 and len(docs) > max_docs:
         docs = docs[:max_docs]
         ranked = ranked[:max_docs]
+
+    # Per-document cap (PR #41 D2 follow-up). Truncates any single doc
+    # exceeding `max_per_doc` to defend against the 512-token batch
+    # limit on bge-reranker-v2-m3. Runs before the total-chars cap so
+    # the proportional truncation below sees already-clamped lengths.
+    if max_per_doc > 0 and docs:
+        docs = [d[:max_per_doc] if len(d) > max_per_doc else d for d in docs]
 
     # Per-doc proportional truncation. Only fires once the doc count has
     # already been clamped above, so `len(docs)` here is the final count.
@@ -112,12 +148,14 @@ def _apply_caps(
     ):
         logger.warning(
             "reranker input capped: docs=%d->%d chars=%d->%d "
-            "(TRAWL_RERANK_MAX_DOCS=%d TRAWL_RERANK_MAX_CHARS=%d)",
+            "(TRAWL_RERANK_MAX_DOCS=%d TRAWL_RERANK_MAX_PER_DOC_CHARS=%d "
+            "TRAWL_RERANK_MAX_CHARS=%d)",
             telemetry["pre_docs"],
             telemetry["post_docs"],
             telemetry["pre_chars"],
             telemetry["post_chars"],
             max_docs,
+            max_per_doc,
             max_chars,
         )
     return ranked, docs, telemetry

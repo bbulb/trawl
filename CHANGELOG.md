@@ -9,6 +9,47 @@ not yet follow semver strictly — expect breaking changes before
 
 _No changes yet._
 
+## [0.4.3] — 2026-04-21
+
+Patch release. Ships the per-document char cap follow-up pre-
+registered in 0.4.2 as the fix to PR #41's D2 (H2) outcome — the
+per-document 512-token batch limit on `bge-reranker-v2-m3` that
+caused MDN small-payload requests to fast-reject with HTTP 500
+even after PR #38's total-chars cap.
+
+Single env var addition plus one conditional in `_apply_caps`. No
+breaking changes; `PipelineResult.rerank_capped` (PR #40) already
+reflects per-doc fires through its existing
+`pre_chars != post_chars` predicate, so no plumbing change.
+
+### Added
+
+- **Per-document char cap on rerank() payload** (PR #43). New
+  `TRAWL_RERANK_MAX_PER_DOC_CHARS` env var (default `1500`) clamps
+  any single document exceeding the cap before the POST to `:8083`.
+  Defends against the per-document 512-token batch limit on
+  `bge-reranker-v2-m3` confirmed by PR #41's D2 diagnostic — distinct
+  from the 8 192-token total context limit addressed by PR #38's
+  total-chars cap. The clamp runs between the existing doc-count cap
+  and total-chars cap so proportional truncation (when the total
+  budget still exceeds) sees already-clamped per-doc lengths.
+  Existing `PipelineResult.rerank_capped` (PR #40) reflects per-doc
+  fires through its existing `pre_chars != post_chars` predicate; no
+  plumbing change required. Default `1500` was bracketed empirically
+  on the captured MDN Fetch_API payload: cap=1500 PASSes (server
+  reports 3 321 prompt_tokens for the 16-doc payload), cap=1550 FAILs
+  (the 1 545-char 2nd-longest doc tokenises to ~515 tokens — over the
+  512 batch limit). 1500 sits on the safe side at the observed
+  code-heavy 3.0-3.5 chars/token ratio. CJK content tokenises denser
+  (~1-2 chars/token); risk section in the design doc flags this as a
+  future tuning concern (drop to ~1000 if a CJK page reproducibly
+  trips the per-doc 500). `<= 0` disables the cap. Verification (per
+  design-doc gate): `pytest tests/test_reranking_cap.py` 20/20;
+  parity 15/15; coding shard 22/24 (same pre-change baseline);
+  `benchmarks/reranker_mdn_sporadic_diag.py` re-run after re-capture
+  flips MDN from 100 % failure to 0 % (decision D0). See
+  `docs/superpowers/specs/2026-04-21-rerank-per-doc-char-cap-design.md`.
+
 ## [0.4.2] — 2026-04-21
 
 Patch release. Two follow-ups to the 0.4.1 chunk-window cap
