@@ -9,6 +9,83 @@ not yet follow semver strictly — expect breaking changes before
 
 _No changes yet._
 
+## [0.4.1] — 2026-04-21
+
+Patch release. Closes the reranker `:8083` reliability follow-up
+chain surfaced in 0.4.0: measurements across PR #31/#32/#33/#34
+logged intermittent `HTTP 500` from the reranker on large synthetic
+sweeps, masked in practice by the cosine fallback. The 2026-04-20
+stability diagnostic (PR #36) pinned the primary failure mode to
+`bge-reranker-v2-m3`'s server-side 8 192-token validator fast-
+rejecting oversize requests, and the shadow-DOM catalog tool
+(PR #37) confirmed the 0.4.0 allow-list is still optimal on the
+measured slice. This release ships the defensive chunk-window cap
+that prevents pathological payloads from reaching the server in
+the first place.
+
+No breaking changes. A residual **MDN small-payload sporadic 500**
+failure mode — observed across PR #31/#32/#33/#34/#36/#38
+measurements but not explained by the payload-size threshold —
+remains open and is queued as the next diagnostic spike
+(`notes/next-session-2026-04-21-followups.md`).
+
+### Added
+
+- **Defensive chunk-window cap on the reranker request** (PR #38).
+  `src/trawl/reranking.py`'s `rerank()` now clamps its outbound
+  payload to `TRAWL_RERANK_MAX_DOCS` (default `30`) documents and
+  `TRAWL_RERANK_MAX_CHARS` (default `40000`) total characters
+  (`query + docs`) before posting to `:8083`. If the doc-count cap
+  fires, lower-cosine-rank tail chunks are dropped; if the char cap
+  fires, each remaining doc is proportionally truncated (floor
+  `200` chars to keep some signal). A single `WARNING` is logged
+  when either cap activates. `<= 0` on either env var disables the
+  cap (sentinel for the measurement sanity path). Rationale: the
+  2026-04-20 stability diagnostic (PR #36) confirmed that
+  `bge-reranker-v2-m3`'s server-side validator fast-rejects requests
+  beyond its 8 192-token context with HTTP 500. Follow-up spike
+  bracketed the empirical threshold between 40 000 chars (passes)
+  and 50 000 chars (fails); 50 synthetic large-burst requests went
+  from 100 % fast-reject without the cap to 0 % failure with it,
+  while the 15-case parity matrix stayed 15/15 and the 16-pattern
+  `code_heavy_query` slice remained unchanged (1 pre-existing,
+  external flake unrelated to this change — `curl_options` budget).
+  New `--via-trawl` mode in `benchmarks/reranker_stability_diag.py`
+  routes burst requests through `trawl.reranking.rerank()` so the
+  cap is exercised; the original direct-HTTP mode is retained for
+  threshold bracketing. See
+  `docs/superpowers/specs/2026-04-20-reranking-chunk-window-cap-design.md`.
+
+### Research / Tooling
+
+- **Reranker `:8083` stability diagnostic** (PR #36). Pre-registered
+  one-shot diagnostic that pinned the 0.4.0-era intermittent `500`
+  to `bge-reranker-v2-m3`'s server-side input-length validator.
+  Three synthetic bursts (small / medium / large, 50 requests each)
+  posted directly to `localhost:8083` bypassing
+  `trawl.reranking.rerank()`: the large burst (50 docs × ~2 000
+  chars ≈ 101 k chars) fast-rejected 50/50 in ~39 ms each, while
+  small and medium bursts and all interleaved canaries passed.
+  Trawl's normal workload (`retrieve_k=10` × `MAX_EMBED_INPUT_CHARS
+  =1800` = 18 k chars max) falls in the safe band, so this PR
+  shipped runner + design only; the D2 payload-size threshold it
+  registered is now enforced by the PR #38 cap. Runner:
+  `benchmarks/reranker_stability_diag.py`. Design doc:
+  `docs/superpowers/specs/2026-04-20-reranker-stability-diag-design.md`.
+- **Shadow-DOM custom-element catalog tool** (PR #37). Preemptive
+  post-0.4.0 scan for `SHADOW_DOM_UNWRAP_TAGS` allow-list expansion
+  candidates. Hits all 16 `code_heavy_query` URLs, enumerates
+  custom-element tag names present on each, and reports which ones
+  have populated shadow roots plus `pre > code` structure. Result:
+  across 45 unique custom-element tag names, only `mdn-code-example`
+  (23 hits, MDN only) carries `pre > code` content in its shadow
+  root. Other populated shadow roots (Rust's `rustdoc-topbar` and 8
+  other MDN custom elements) expose only UI chrome — unwrapping
+  them would inject navigation text as extraction noise. Conclusion:
+  the 0.4.0 allow-list is optimal for the measured slice and no
+  addition is warranted. Reusable runner at
+  `benchmarks/shadow_dom_catalog.py` for future URL additions.
+
 ## [0.4.0] — 2026-04-20
 
 Fourth tagged release. Closes the C6 (hybrid retrieval) follow-up
