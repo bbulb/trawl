@@ -7,7 +7,28 @@ not yet follow semver strictly — expect breaking changes before
 
 ## [Unreleased]
 
-_No changes yet._
+### Research (no code change, shipped as reusable runner + design doc)
+
+- **CJK per-doc cap validation — D-VALIDATE** (PR #45). New
+  `benchmarks/cjk_per_doc_cap_validation.py` capture-and-replay runner.
+  Pre-registered follow-up to PR #43 — PR #43's design-doc risk section
+  flagged that pure CJK (~1-2 chars/token) might tokenise a 1500-char
+  doc to ~1500 tokens, above the 512-token per-doc batch limit on
+  `bge-reranker-v2-m3`. This spike captured the rerank payload on
+  Korean Wikipedia 이순신 + Japanese Wikipedia 寿司, replayed each
+  against `:8083` 200 times (N=400 total). **Result: 0 / 400
+  failures (0.0%) on both fixtures**. Observed longest chunks: Korean
+  311 chars (≈ 207 tokens), Japanese 321 chars (≈ 214 tokens). The
+  chunker's 450-char target combined with denser CJK sentence
+  boundaries keeps CJK chunks well under the cap boundary — the 1500
+  cap is effectively inert on CJK prose, not because the cap is
+  sufficient at the boundary but because chunker-level limits bite
+  first. PR #43's risk section and CLAUDE.md's reranking row have
+  been updated with the validation result. No code change. Caveats:
+  two-fixture scope, Chinese not covered, chunker coupling noted —
+  if a Chinese or future CJK page reproducibly trips the per-doc 500
+  (visible via PR #40's `rerank_capped` telemetry), revisit. Design
+  doc: `docs/superpowers/specs/2026-04-21-cjk-per-doc-cap-validation-design.md`.
 
 ## [0.4.3] — 2026-04-21
 
