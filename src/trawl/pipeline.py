@@ -53,8 +53,9 @@ PROFILE_TRANSFER_MAX_RATIO = float(
 
 
 def _read_chunk_budget() -> int:
-    """Read `TRAWL_CHUNK_BUDGET` at call time; treat malformed input as disabled."""
-    raw = os.environ.get("TRAWL_CHUNK_BUDGET", "0")
+    """Read `TRAWL_CHUNK_BUDGET` at call time. Default `100` (prefilter on);
+    `0` disables; malformed input disables."""
+    raw = os.environ.get("TRAWL_CHUNK_BUDGET", "100")
     try:
         return max(0, int(raw))
     except ValueError:
@@ -103,8 +104,9 @@ class PipelineResult:
     cache_hit: bool = False
     # Longform retrieval cost (2026-04-20) — chunks that survived the
     # BM25 prefilter and were actually sent to the embedding server.
-    # Equals `n_chunks_total` when `TRAWL_CHUNK_BUDGET` is unset or the
-    # pool was already under budget. 0 for error / passthrough paths.
+    # Equals `n_chunks_total` when the pool was already under the
+    # `TRAWL_CHUNK_BUDGET` (default 100) or the budget is disabled
+    # (`TRAWL_CHUNK_BUDGET=0`). 0 for error / passthrough paths.
     n_chunks_embedded: int = 0
     # 0.4.2 — defensive chunk-window cap telemetry. True when rerank()'s
     # pre-POST cap (TRAWL_RERANK_MAX_DOCS / TRAWL_RERANK_MAX_CHARS)
