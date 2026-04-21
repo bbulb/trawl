@@ -106,6 +106,11 @@ class PipelineResult:
     # Equals `n_chunks_total` when `TRAWL_CHUNK_BUDGET` is unset or the
     # pool was already under budget. 0 for error / passthrough paths.
     n_chunks_embedded: int = 0
+    # 0.4.2 — defensive chunk-window cap telemetry. True when rerank()'s
+    # pre-POST cap (TRAWL_RERANK_MAX_DOCS / TRAWL_RERANK_MAX_CHARS)
+    # dropped documents or truncated any doc. Stays False when the cap
+    # is disabled or when the payload was already under the limits.
+    rerank_capped: bool = False
 
     @property
     def output_chars(self) -> int:
@@ -362,6 +367,7 @@ def _build_profile_result(
     }
 
     rerank_ms = 0
+    rerank_capped = False
     n_chunks_embedded = 0
     if len(chunks) <= PROFILE_DIRECT_CHUNK_THRESHOLD:
         path = "profile_direct"
@@ -391,7 +397,7 @@ def _build_profile_result(
             )
         if use_rerank and retrieved.scored:
             t_rr = time.monotonic()
-            final_scored = reranking.rerank(
+            final_scored, rerank_capped = reranking.rerank(
                 query, retrieved.scored, k=chosen_k, page_title=page_title
             )
             rerank_ms = int((time.monotonic() - t_rr) * 1000)
@@ -417,6 +423,7 @@ def _build_profile_result(
         path=path,
         rerank_used=use_rerank and path == "profile_retrieval",
         rerank_ms=rerank_ms,
+        rerank_capped=rerank_capped,
         excerpts=enrichment.extract_excerpts(emitted_chunks),
         outbound_links=enrichment.extract_outbound_links(emitted_chunks),
         page_entities=enrichment.extract_page_entities(
@@ -915,9 +922,12 @@ def _run_full_pipeline(
         )
 
     rerank_ms = 0
+    rerank_capped = False
     if use_rerank and retrieved.scored:
         t_rerank = time.monotonic()
-        final_scored = reranking.rerank(query, retrieved.scored, k=chosen_k, page_title=page_title)
+        final_scored, rerank_capped = reranking.rerank(
+            query, retrieved.scored, k=chosen_k, page_title=page_title
+        )
         rerank_ms = int((time.monotonic() - t_rerank) * 1000)
     else:
         final_scored = retrieved.scored
@@ -949,6 +959,7 @@ def _run_full_pipeline(
         path="full_page_retrieval",
         rerank_used=use_rerank,
         rerank_ms=rerank_ms,
+        rerank_capped=rerank_capped,
         page_title=page_title,
         content_type=content_type,
         cache_hit=cache_hit,

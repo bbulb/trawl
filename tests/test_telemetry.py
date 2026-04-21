@@ -60,6 +60,7 @@ def test_build_event_fields():
     assert event["profile_used"] is False
     assert event["profile_hash"] is None
     assert event["rerank_used"] is False
+    assert event["rerank_capped"] is False
     assert event["hyde_used"] is False
     assert event["fetch_ms"] == 100
     assert event["total_ms"] == 140
@@ -70,6 +71,14 @@ def test_build_event_fields():
     assert "query" not in event
     assert "chunks" not in event
     assert "hyde_text" not in event
+
+
+def test_build_event_propagates_rerank_capped_true():
+    """rerank_capped=True on the result must surface in the JSONL event."""
+    r = _sample_result()
+    r.rerank_capped = True
+    event = telemetry._build_event(r)
+    assert event["rerank_capped"] is True
 
 
 def test_record_appends_jsonl(tmp_path: Path, monkeypatch):

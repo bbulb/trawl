@@ -9,6 +9,25 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Added
 
+- **`PipelineResult.rerank_capped` telemetry** (PR #TBD). New boolean
+  field on `PipelineResult` that exposes whether the chunk-window cap
+  introduced in PR #38 actually fired on a given `fetch_relevant()`
+  call. Same predicate as the existing `WARNING` log line in
+  `_apply_caps` (`pre_docs != post_docs or pre_chars != post_chars`).
+  Default `False` for the error path, the passthrough path, and any
+  call where the cap stays inactive. Also surfaced in the opt-in
+  JSONL telemetry (`src/trawl/telemetry.py::_build_event`) as
+  `rerank_capped`, alongside `rerank_used`. Telemetry schema version
+  stays `1` — the new key is additive and existing consumers tolerate
+  unknown fields.
+  Library-internal: `trawl.reranking.rerank()` now returns
+  `tuple[list[ScoredChunk], bool]` (was `list[ScoredChunk]`). The
+  `(scored, capped)` tuple is unpacked at both call sites in
+  `pipeline.py` and at the `--via-trawl` caller in
+  `benchmarks/reranker_stability_diag.py`. `fetch_relevant()`'s public
+  signature is unchanged. See
+  `docs/superpowers/specs/2026-04-21-rerank-cap-telemetry-design.md`.
+
 - **Defensive chunk-window cap on the reranker request** (PR #TBD).
   `src/trawl/reranking.py`'s `rerank()` now clamps its outbound
   payload to `TRAWL_RERANK_MAX_DOCS` (default `30`) documents and

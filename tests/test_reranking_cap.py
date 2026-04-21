@@ -153,5 +153,81 @@ def test_empty_inputs_are_safe(monkeypatch):
     assert tel["pre_docs"] == tel["post_docs"] == 0
 
 
+# --- rerank() return-shape tests (0.4.2) -----------------------------------
+#
+# rerank() now returns (scored, capped). The HTTP call is stubbed so these
+# do not require a running :8083 reranker; the cap predicate runs before
+# the POST, so the returned `capped` is correct even on the fallback path.
+
+
+class _FailingClient:
+    """httpx.Client stand-in that always raises on POST.
+
+    Forces rerank() into its graceful-fallback branch so we can test the
+    return shape without a live reranker server.
+    """
+
+    def __init__(self, *_a, **_kw):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        pass
+
+    def post(self, *_a, **_kw):
+        import httpx
+
+        raise httpx.HTTPError("stubbed: no reranker in this test")
+
+
+def test_rerank_returns_tuple_capped_true(monkeypatch):
+    monkeypatch.setenv("TRAWL_RERANK_MAX_DOCS", "5")
+    monkeypatch.delenv("TRAWL_RERANK_MAX_CHARS", raising=False)
+    monkeypatch.setattr("trawl.reranking.httpx.Client", _FailingClient)
+
+    from trawl.reranking import rerank
+
+    docs = [f"body {i}" for i in range(12)]
+    scored = _scored(docs)
+    result, capped = rerank("q", scored, k=3)
+
+    assert capped is True
+    assert isinstance(result, list)
+    assert len(result) == 3
+
+
+def test_rerank_returns_tuple_capped_false(monkeypatch):
+    monkeypatch.delenv("TRAWL_RERANK_MAX_DOCS", raising=False)
+    monkeypatch.delenv("TRAWL_RERANK_MAX_CHARS", raising=False)
+    monkeypatch.setattr("trawl.reranking.httpx.Client", _FailingClient)
+
+    from trawl.reranking import rerank
+
+    docs = ["short body"] * 3
+    scored = _scored(docs)
+    result, capped = rerank("q", scored, k=2)
+
+    assert capped is False
+    assert len(result) == 2
+
+
+def test_rerank_empty_input_returns_false():
+    from trawl.reranking import rerank
+
+    result, capped = rerank("q", [], k=5)
+    assert result == []
+    assert capped is False
+
+
+def test_rerank_k_zero_returns_false():
+    from trawl.reranking import rerank
+
+    result, capped = rerank("q", _scored(["body"]), k=0)
+    assert result == []
+    assert capped is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

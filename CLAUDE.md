@@ -329,6 +329,7 @@ change them, run `tests/test_pipeline.py` before AND after.
 | `pipeline.PROFILE_TRANSFER_MAX_RATIO` | `3.0` | Upper bound. Raising admits accidental `<body>`-level selector climbs |
 | `reranking.py HTTP_TIMEOUT_S` | `30.0` | Reranker timeout; 20 pairs should complete well within this |
 | `reranking.py DEFAULT_MAX_DOCS / DEFAULT_MAX_CHARS / MIN_PER_DOC_CHARS` | `30 / 40000 / 200` | Defensive chunk-window cap; empirically bracketed between 40k (PASS) and 50k (FAIL) server-side. Raising `DEFAULT_MAX_CHARS` past 40k risks hitting the `bge-reranker-v2-m3` 8192-token validator. Overridable via `TRAWL_RERANK_MAX_DOCS` / `TRAWL_RERANK_MAX_CHARS`. |
+| `reranking.py rerank()` return shape | `tuple[list[ScoredChunk], bool]` | `(scored, capped)`. The boolean drives `PipelineResult.rerank_capped` and the `rerank_capped` JSONL telemetry key. Refactors that drop the second element silently lose the cap-fire signal. Library-internal API only; `fetch_relevant()` is unaffected. |
 | `pipeline.py retrieve_k multiplier` | `2` | Retrieves 2x candidates for reranking; fewer reduces rerank benefit, more adds latency |
 | `profiles/mapper.py DEFAULT_MAX_CANDIDATES_PER_ANCHOR` | `5` | Enough headroom to find non-noise candidates after sidebar/nav filtering |
 | `profiles/mapper.py NOISE_CLS_RE` | `nav\|sidebar\|toc\|...` | Noise region detection for anchor filtering; too broad catches content, too narrow misses sidebars |

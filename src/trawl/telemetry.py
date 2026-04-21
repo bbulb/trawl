@@ -48,6 +48,7 @@ def _build_event(result: PipelineResult) -> dict:
         "content_type": result.content_type,
         "structured_path": result.structured_path,
         "rerank_used": result.rerank_used,
+        "rerank_capped": result.rerank_capped,
         "hyde_used": result.hyde_used,
         "fetch_ms": result.fetch_ms,
         "chunk_ms": result.chunk_ms,
