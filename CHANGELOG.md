@@ -34,6 +34,35 @@ not yet follow semver strictly — expect breaking changes before
   threshold bracketing. See
   `docs/superpowers/specs/2026-04-20-reranking-chunk-window-cap-design.md`.
 
+### Research (no code change, shipped as reusable runner + design doc)
+
+- **MDN sporadic 500 reranker diagnostic — D2** (PR #TBD). New
+  `benchmarks/reranker_mdn_sporadic_diag.py` capture-and-replay
+  runner. `--capture` intercepts `trawl.reranking.rerank()`'s POST
+  inside a real `fetch_relevant()` call to dump the exact
+  `{"model","query","documents"}` payload to disk; default mode
+  replays the captured payload across six pre-registered sweeps
+  (repetition × 200, gap_0 / gap_500 / gap_5000 × 50, strip × 50,
+  canary × 50 with foreign-payload inserts) and resolves a D0-D5
+  decision per the design-doc gate table. Outcome on this run: **D2
+  (H2 — payload-specific server tokenizer edge)**. MDN payload
+  failed 352/352 (100 %) deterministically; React canary 0/50;
+  stripped MDN variant 50/50 (so HTML entity / Unicode is not the
+  trigger); gap variants identical (so keep-alive drift is not the
+  trigger). The actual server response body —
+  `"input (517 tokens) is too large to process. increase the physical
+  batch size (current batch size: 512)"` — confirms a **per-document
+  512-token batch limit**, distinct from the 8 192-token total
+  context limit addressed by PR #38. The longest captured MDN doc
+  was 2 056 chars ≈ 514 tokens. The original "sporadic" framing
+  came from upstream variance: page rendering / chunk boundary
+  jitter occasionally produces an MDN doc > 512 tokens after the
+  title prefix is added; the reranker itself is deterministic.
+  Follow-up fix candidate (separate spike, not in this PR):
+  per-document char cap in `_apply_caps` (`TRAWL_RERANK_MAX_PER_DOC_CHARS`,
+  default ~1800). See
+  `docs/superpowers/specs/2026-04-21-reranker-mdn-sporadic-diag-design.md`.
+
 ## [0.4.0] — 2026-04-20
 
 Fourth tagged release. Closes the C6 (hybrid retrieval) follow-up
