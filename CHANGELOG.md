@@ -9,7 +9,7 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Research (no code change, shipped as reusable runner + design doc)
 
-- **CJK per-doc cap validation — D-VALIDATE**. New
+- **CJK per-doc cap validation — D-VALIDATE** (PR #45). New
   `benchmarks/cjk_per_doc_cap_validation.py` capture-and-replay runner.
   Pre-registered follow-up to PR #43 — PR #43's design-doc risk section
   flagged that pure CJK (~1-2 chars/token) might tokenise a 1500-char
