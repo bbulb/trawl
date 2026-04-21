@@ -128,9 +128,9 @@ def test_warning_emitted_when_cap_fires(monkeypatch, caplog):
     docs = [f"body {i}" for i in range(8)]
     with caplog.at_level(logging.WARNING, logger="trawl.reranking"):
         _apply_caps("q", _scored(docs), docs)
-    assert any(
-        "reranker input capped" in rec.message for rec in caplog.records
-    ), f"expected WARNING; got {[r.message for r in caplog.records]}"
+    assert any("reranker input capped" in rec.message for rec in caplog.records), (
+        f"expected WARNING; got {[r.message for r in caplog.records]}"
+    )
 
 
 def test_no_warning_when_cap_does_not_fire(monkeypatch, caplog):
@@ -141,9 +141,7 @@ def test_no_warning_when_cap_does_not_fire(monkeypatch, caplog):
     docs = ["body"] * 3
     with caplog.at_level(logging.WARNING, logger="trawl.reranking"):
         _apply_caps("q", _scored(docs), docs)
-    assert not any(
-        "reranker input capped" in rec.message for rec in caplog.records
-    )
+    assert not any("reranker input capped" in rec.message for rec in caplog.records)
 
 
 def test_empty_inputs_are_safe(monkeypatch):

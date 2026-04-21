@@ -106,7 +106,10 @@ def _apply_caps(
         "pre_chars": pre_chars,
         "post_chars": post_chars,
     }
-    if telemetry["pre_docs"] != telemetry["post_docs"] or telemetry["pre_chars"] != telemetry["post_chars"]:
+    if (
+        telemetry["pre_docs"] != telemetry["post_docs"]
+        or telemetry["pre_chars"] != telemetry["post_chars"]
+    ):
         logger.warning(
             "reranker input capped: docs=%d->%d chars=%d->%d "
             "(TRAWL_RERANK_MAX_DOCS=%d TRAWL_RERANK_MAX_CHARS=%d)",
