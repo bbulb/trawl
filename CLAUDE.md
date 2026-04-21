@@ -12,15 +12,14 @@ trawl directory. Humans should read `README.md` first, then
 
 ## Current status
 
-- **Version**: 0.4.0 (2026-04-20). Highlights since `v0.3.0`: shadow-
-  DOM unwrap for code-block custom elements (default on — MDN-style
-  `<mdn-code-example>` pages now extract their code bodies), Stack
-  Exchange URL corrections (SO/SF patterns resolved to unrelated
-  questions pre-fix), and four research spikes whose measurements
-  are preserved as reusable runners (C6 RRF-k, id-aware BM25
-  tokenizer, HyDE → BM25 extras, MDN reranker diagnostic). C6
-  follow-up chain closed at `code_heavy_query` 16/16. Full list in
-  `CHANGELOG.md`.
+- **Version**: 0.4.2 (2026-04-21). Highlights since `v0.4.1`:
+  `PipelineResult.rerank_capped` boolean + JSONL telemetry key for
+  observability of the chunk-window cap fire rate (PR #40), and the
+  MDN sporadic 500 reranker diagnostic that resolved to **D2 (H2)** —
+  a per-document 512-token batch limit on the reranker server,
+  distinct from the 8 192-token total context limit addressed by the
+  PR #38 cap (PR #41). The per-document char cap fix is queued for
+  0.4.3 as a separate pre-registered spike. Full list in `CHANGELOG.md`.
 - **Parity matrix**: 15/15 cases pass (see `tests/test_cases.yaml`).
   `kbo_schedule` pinned to a historical game day to survive KBO
   off-days.

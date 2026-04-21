@@ -7,9 +7,34 @@ not yet follow semver strictly — expect breaking changes before
 
 ## [Unreleased]
 
+_No changes yet._
+
+## [0.4.2] — 2026-04-21
+
+Patch release. Two follow-ups to the 0.4.1 chunk-window cap
+(PR #38):
+
+1. **`PipelineResult.rerank_capped` telemetry** (PR #40) — surfaces
+   whether the cap actually fired on a given fetch as a boolean
+   field plus a new JSONL telemetry key, so cap-fire rates can be
+   tracked offline.
+2. **MDN sporadic 500 reranker diagnostic** (PR #41) — resolved
+   the residual MDN small-payload `500` flagged in 0.4.1's "Known
+   limitations" to gate **D2 (H2)**. Root cause is a **per-document
+   512-token batch limit** on the reranker server, distinct from
+   the 8 192-token total context limit that PR #38 addressed. New
+   capture-and-replay runner ships as a reusable artefact; the
+   per-document char cap fix is queued for 0.4.3 as a separate
+   pre-registered spike.
+
+No production-code changes from PR #41 (diagnostic-only). PR #40's
+`trawl.reranking.rerank()` return signature change is library-
+internal; `fetch_relevant()` and the `PipelineResult` field set are
+purely additive.
+
 ### Added
 
-- **`PipelineResult.rerank_capped` telemetry** (PR #TBD). New boolean
+- **`PipelineResult.rerank_capped` telemetry** (PR #40). New boolean
   field on `PipelineResult` that exposes whether the chunk-window cap
   introduced in PR #38 actually fired on a given `fetch_relevant()`
   call. Same predicate as the existing `WARNING` log line in
@@ -28,7 +53,58 @@ not yet follow semver strictly — expect breaking changes before
   signature is unchanged. See
   `docs/superpowers/specs/2026-04-21-rerank-cap-telemetry-design.md`.
 
-- **Defensive chunk-window cap on the reranker request** (PR #TBD).
+### Research (no code change, shipped as reusable runner + design doc)
+
+- **MDN sporadic 500 reranker diagnostic — D2** (PR #41). New
+  `benchmarks/reranker_mdn_sporadic_diag.py` capture-and-replay
+  runner. `--capture` intercepts `trawl.reranking.rerank()`'s POST
+  inside a real `fetch_relevant()` call to dump the exact
+  `{"model","query","documents"}` payload to disk; default mode
+  replays the captured payload across six pre-registered sweeps
+  (repetition × 200, gap_0 / gap_500 / gap_5000 × 50, strip × 50,
+  canary × 50 with foreign-payload inserts) and resolves a D0-D5
+  decision per the design-doc gate table. Outcome on this run: **D2
+  (H2 — payload-specific server tokenizer edge)**. MDN payload
+  failed 352/352 (100 %) deterministically; React canary 0/50;
+  stripped MDN variant 50/50 (so HTML entity / Unicode is not the
+  trigger); gap variants identical (so keep-alive drift is not the
+  trigger). The actual server response body —
+  `"input (517 tokens) is too large to process. increase the physical
+  batch size (current batch size: 512)"` — confirms a **per-document
+  512-token batch limit**, distinct from the 8 192-token total
+  context limit addressed by PR #38. The longest captured MDN doc
+  was 2 056 chars ≈ 514 tokens. The original "sporadic" framing
+  came from upstream variance: page rendering / chunk boundary
+  jitter occasionally produces an MDN doc > 512 tokens after the
+  title prefix is added; the reranker itself is deterministic.
+  Follow-up fix candidate (separate spike, queued for 0.4.3):
+  per-document char cap in `_apply_caps` (`TRAWL_RERANK_MAX_PER_DOC_CHARS`,
+  default ~1800). See
+  `docs/superpowers/specs/2026-04-21-reranker-mdn-sporadic-diag-design.md`.
+
+## [0.4.1] — 2026-04-21
+
+Patch release. Closes the reranker `:8083` reliability follow-up
+chain surfaced in 0.4.0: measurements across PR #31/#32/#33/#34
+logged intermittent `HTTP 500` from the reranker on large synthetic
+sweeps, masked in practice by the cosine fallback. The 2026-04-20
+stability diagnostic (PR #36) pinned the primary failure mode to
+`bge-reranker-v2-m3`'s server-side 8 192-token validator fast-
+rejecting oversize requests, and the shadow-DOM catalog tool
+(PR #37) confirmed the 0.4.0 allow-list is still optimal on the
+measured slice. This release ships the defensive chunk-window cap
+that prevents pathological payloads from reaching the server in
+the first place.
+
+No breaking changes. A residual **MDN small-payload sporadic 500**
+failure mode — observed across PR #31/#32/#33/#34/#36/#38
+measurements but not explained by the payload-size threshold —
+remains open and is queued as the next diagnostic spike
+(`notes/next-session-2026-04-21-followups.md`).
+
+### Added
+
+- **Defensive chunk-window cap on the reranker request** (PR #38).
   `src/trawl/reranking.py`'s `rerank()` now clamps its outbound
   payload to `TRAWL_RERANK_MAX_DOCS` (default `30`) documents and
   `TRAWL_RERANK_MAX_CHARS` (default `40000`) total characters
@@ -53,34 +129,35 @@ not yet follow semver strictly — expect breaking changes before
   threshold bracketing. See
   `docs/superpowers/specs/2026-04-20-reranking-chunk-window-cap-design.md`.
 
-### Research (no code change, shipped as reusable runner + design doc)
+### Research / Tooling
 
-- **MDN sporadic 500 reranker diagnostic — D2** (PR #TBD). New
-  `benchmarks/reranker_mdn_sporadic_diag.py` capture-and-replay
-  runner. `--capture` intercepts `trawl.reranking.rerank()`'s POST
-  inside a real `fetch_relevant()` call to dump the exact
-  `{"model","query","documents"}` payload to disk; default mode
-  replays the captured payload across six pre-registered sweeps
-  (repetition × 200, gap_0 / gap_500 / gap_5000 × 50, strip × 50,
-  canary × 50 with foreign-payload inserts) and resolves a D0-D5
-  decision per the design-doc gate table. Outcome on this run: **D2
-  (H2 — payload-specific server tokenizer edge)**. MDN payload
-  failed 352/352 (100 %) deterministically; React canary 0/50;
-  stripped MDN variant 50/50 (so HTML entity / Unicode is not the
-  trigger); gap variants identical (so keep-alive drift is not the
-  trigger). The actual server response body —
-  `"input (517 tokens) is too large to process. increase the physical
-  batch size (current batch size: 512)"` — confirms a **per-document
-  512-token batch limit**, distinct from the 8 192-token total
-  context limit addressed by PR #38. The longest captured MDN doc
-  was 2 056 chars ≈ 514 tokens. The original "sporadic" framing
-  came from upstream variance: page rendering / chunk boundary
-  jitter occasionally produces an MDN doc > 512 tokens after the
-  title prefix is added; the reranker itself is deterministic.
-  Follow-up fix candidate (separate spike, not in this PR):
-  per-document char cap in `_apply_caps` (`TRAWL_RERANK_MAX_PER_DOC_CHARS`,
-  default ~1800). See
-  `docs/superpowers/specs/2026-04-21-reranker-mdn-sporadic-diag-design.md`.
+- **Reranker `:8083` stability diagnostic** (PR #36). Pre-registered
+  one-shot diagnostic that pinned the 0.4.0-era intermittent `500`
+  to `bge-reranker-v2-m3`'s server-side input-length validator.
+  Three synthetic bursts (small / medium / large, 50 requests each)
+  posted directly to `localhost:8083` bypassing
+  `trawl.reranking.rerank()`: the large burst (50 docs × ~2 000
+  chars ≈ 101 k chars) fast-rejected 50/50 in ~39 ms each, while
+  small and medium bursts and all interleaved canaries passed.
+  Trawl's normal workload (`retrieve_k=10` × `MAX_EMBED_INPUT_CHARS
+  =1800` = 18 k chars max) falls in the safe band, so this PR
+  shipped runner + design only; the D2 payload-size threshold it
+  registered is now enforced by the PR #38 cap. Runner:
+  `benchmarks/reranker_stability_diag.py`. Design doc:
+  `docs/superpowers/specs/2026-04-20-reranker-stability-diag-design.md`.
+- **Shadow-DOM custom-element catalog tool** (PR #37). Preemptive
+  post-0.4.0 scan for `SHADOW_DOM_UNWRAP_TAGS` allow-list expansion
+  candidates. Hits all 16 `code_heavy_query` URLs, enumerates
+  custom-element tag names present on each, and reports which ones
+  have populated shadow roots plus `pre > code` structure. Result:
+  across 45 unique custom-element tag names, only `mdn-code-example`
+  (23 hits, MDN only) carries `pre > code` content in its shadow
+  root. Other populated shadow roots (Rust's `rustdoc-topbar` and 8
+  other MDN custom elements) expose only UI chrome — unwrapping
+  them would inject navigation text as extraction noise. Conclusion:
+  the 0.4.0 allow-list is optimal for the measured slice and no
+  addition is warranted. Reusable runner at
+  `benchmarks/shadow_dom_catalog.py` for future URL additions.
 
 ## [0.4.0] — 2026-04-20
 
