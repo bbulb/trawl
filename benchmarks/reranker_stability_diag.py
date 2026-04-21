@@ -234,7 +234,10 @@ def _call_rerank_via_trawl(
 
     t0 = time.monotonic()
     try:
-        trawl_reranking.rerank(
+        # rerank() returns (scored, capped) since 0.4.2; discard both
+        # here — this diag only cares about server outcome, inferred
+        # via the logger capture in ``ctx``.
+        _scored, _capped = trawl_reranking.rerank(
             query,
             _build_synthetic_scored(docs),
             k=k,

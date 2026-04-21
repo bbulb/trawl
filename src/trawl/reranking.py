@@ -153,14 +153,19 @@ def rerank(
     page_title: str = "",
     base_url: str = DEFAULT_RERANKER_URL,
     model: str = DEFAULT_RERANKER_MODEL,
-) -> list[ScoredChunk]:
-    """Rerank candidates via cross-encoder. Returns top-k by relevance.
+) -> tuple[list[ScoredChunk], bool]:
+    """Rerank candidates via cross-encoder. Returns (top-k, capped).
+
+    `capped` is True when `_apply_caps` dropped documents or truncated
+    any doc (same predicate as the existing WARNING log). Remains True
+    even when the subsequent HTTP call fails, so callers see the cap
+    fired regardless of the downstream outcome.
 
     On any HTTP error, logs a warning and returns the input list
     truncated to k (graceful fallback to cosine ranking).
     """
     if not scored or k <= 0:
-        return scored[:k]
+        return scored[:k], False
 
     documents = _build_documents(
         scored,
@@ -168,7 +173,11 @@ def rerank(
         include_title=_include_title_default(),
     )
 
-    scored, documents, _ = _apply_caps(query, scored, documents)
+    scored, documents, tel = _apply_caps(query, scored, documents)
+    capped = (
+        tel["pre_docs"] != tel["post_docs"]
+        or tel["pre_chars"] != tel["post_chars"]
+    )
 
     try:
         with httpx.Client(timeout=HTTP_TIMEOUT_S) as client:
@@ -184,7 +193,7 @@ def rerank(
             results = r.json()["results"]
     except (httpx.HTTPError, KeyError, ValueError) as e:
         logger.warning("reranker unavailable, falling back to cosine: %s", e)
-        return scored[:k]
+        return scored[:k], capped
 
     reranked = []
     for item in results:
@@ -193,4 +202,4 @@ def rerank(
         reranked.append(ScoredChunk(chunk=sc.chunk, score=item["relevance_score"]))
 
     reranked.sort(key=lambda s: -s.score)
-    return reranked[:k]
+    return reranked[:k], capped
