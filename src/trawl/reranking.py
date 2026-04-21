@@ -174,10 +174,7 @@ def rerank(
     )
 
     scored, documents, tel = _apply_caps(query, scored, documents)
-    capped = (
-        tel["pre_docs"] != tel["post_docs"]
-        or tel["pre_chars"] != tel["post_chars"]
-    )
+    capped = tel["pre_docs"] != tel["post_docs"] or tel["pre_chars"] != tel["post_chars"]
 
     try:
         with httpx.Client(timeout=HTTP_TIMEOUT_S) as client:

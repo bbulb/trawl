@@ -167,14 +167,18 @@ class _FailingClient:
     return shape without a live reranker server.
     """
 
-    def __init__(self, *_a, **_kw): pass
+    def __init__(self, *_a, **_kw):
+        pass
 
-    def __enter__(self): return self
+    def __enter__(self):
+        return self
 
-    def __exit__(self, *_): pass
+    def __exit__(self, *_):
+        pass
 
     def post(self, *_a, **_kw):
         import httpx
+
         raise httpx.HTTPError("stubbed: no reranker in this test")
 
 
