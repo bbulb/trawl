@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trawl"
-version = "0.4.0"
+version = "0.4.3"
 description = "Selective web content extraction — fetch a page and return only the chunks most relevant to a query. Exposed as a Python library and an MCP server."
 readme = "README.md"
 requires-python = ">=3.10"
