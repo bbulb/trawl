@@ -15,6 +15,7 @@ from trawl.chunking import Chunk
 from trawl.reranking import (
     DEFAULT_MAX_CHARS,
     DEFAULT_MAX_DOCS,
+    DEFAULT_MAX_PER_DOC_CHARS,
     MIN_PER_DOC_CHARS,
     _apply_caps,
 )
@@ -103,6 +104,10 @@ def test_caps_stack_docs_then_chars(monkeypatch):
 def test_zero_sentinel_disables_cap(monkeypatch):
     monkeypatch.setenv("TRAWL_RERANK_MAX_DOCS", "0")
     monkeypatch.setenv("TRAWL_RERANK_MAX_CHARS", "0")
+    # Per-doc cap also has its own sentinel; disable so the test name
+    # ("disables cap") still reflects the actual behaviour with all
+    # three knobs zeroed.
+    monkeypatch.setenv("TRAWL_RERANK_MAX_PER_DOC_CHARS", "0")
     docs = ["x" * 5000 for _ in range(100)]
     r_scored, r_docs, tel = _apply_caps("q", _scored(docs), docs)
     assert len(r_docs) == 100
@@ -112,12 +117,14 @@ def test_zero_sentinel_disables_cap(monkeypatch):
 def test_invalid_env_falls_back_to_default(monkeypatch):
     monkeypatch.setenv("TRAWL_RERANK_MAX_DOCS", "not-a-number")
     monkeypatch.setenv("TRAWL_RERANK_MAX_CHARS", "also-bad")
-    # Should not raise; uses DEFAULT_MAX_{DOCS,CHARS}.
+    monkeypatch.setenv("TRAWL_RERANK_MAX_PER_DOC_CHARS", "junk")
+    # Should not raise; uses DEFAULT_MAX_{DOCS,CHARS,PER_DOC_CHARS}.
     docs = ["x" * 100 for _ in range(5)]
     r_scored, r_docs, tel = _apply_caps("q", _scored(docs), docs)
     assert len(r_docs) == 5
     assert DEFAULT_MAX_DOCS > 0
     assert DEFAULT_MAX_CHARS > 0
+    assert DEFAULT_MAX_PER_DOC_CHARS > 0
 
 
 def test_warning_emitted_when_cap_fires(monkeypatch, caplog):
@@ -147,10 +154,102 @@ def test_no_warning_when_cap_does_not_fire(monkeypatch, caplog):
 def test_empty_inputs_are_safe(monkeypatch):
     monkeypatch.delenv("TRAWL_RERANK_MAX_DOCS", raising=False)
     monkeypatch.delenv("TRAWL_RERANK_MAX_CHARS", raising=False)
+    monkeypatch.delenv("TRAWL_RERANK_MAX_PER_DOC_CHARS", raising=False)
     r_scored, r_docs, tel = _apply_caps("q", [], [])
     assert r_scored == []
     assert r_docs == []
     assert tel["pre_docs"] == tel["post_docs"] == 0
+
+
+# --- per-doc char cap tests (0.4.3) ----------------------------------------
+#
+# Defends against the per-document 512-token batch limit on
+# bge-reranker-v2-m3 (PR #41 D2 outcome). 1800-char default is safe
+# under 512 tokens at ~4 chars/token (English MDN content).
+
+
+def test_per_doc_cap_truncates_oversize(monkeypatch):
+    monkeypatch.delenv("TRAWL_RERANK_MAX_DOCS", raising=False)
+    monkeypatch.delenv("TRAWL_RERANK_MAX_CHARS", raising=False)
+    monkeypatch.setenv("TRAWL_RERANK_MAX_PER_DOC_CHARS", "1000")
+    docs = ["x" * 2500, "y" * 500, "z" * 1500]
+    r_scored, r_docs, tel = _apply_caps("q", _scored(docs), docs)
+    # Doc count preserved.
+    assert len(r_docs) == 3
+    # Each oversize doc clamped; short doc untouched.
+    assert len(r_docs[0]) == 1000
+    assert len(r_docs[1]) == 500
+    assert len(r_docs[2]) == 1000
+    # Telemetry reflects truncation.
+    assert tel["pre_chars"] > tel["post_chars"]
+    assert tel["pre_docs"] == tel["post_docs"] == 3
+
+
+def test_per_doc_cap_inert_when_all_under(monkeypatch):
+    monkeypatch.delenv("TRAWL_RERANK_MAX_DOCS", raising=False)
+    monkeypatch.delenv("TRAWL_RERANK_MAX_CHARS", raising=False)
+    monkeypatch.setenv("TRAWL_RERANK_MAX_PER_DOC_CHARS", "1000")
+    docs = ["x" * 500, "y" * 800, "z" * 999]
+    r_scored, r_docs, tel = _apply_caps("q", _scored(docs), docs)
+    assert [len(d) for d in r_docs] == [500, 800, 999]
+    assert tel["pre_chars"] == tel["post_chars"]
+
+
+def test_per_doc_cap_zero_disables(monkeypatch):
+    monkeypatch.delenv("TRAWL_RERANK_MAX_DOCS", raising=False)
+    monkeypatch.delenv("TRAWL_RERANK_MAX_CHARS", raising=False)
+    monkeypatch.setenv("TRAWL_RERANK_MAX_PER_DOC_CHARS", "0")
+    docs = ["x" * 5000, "y" * 3000]
+    r_scored, r_docs, tel = _apply_caps("q", _scored(docs), docs)
+    # No truncation when sentinel is 0.
+    assert [len(d) for d in r_docs] == [5000, 3000]
+    assert tel["pre_chars"] == tel["post_chars"]
+
+
+def test_per_doc_cap_then_total_chars_stack(monkeypatch):
+    # Setup where per-doc clamps each doc to 1000, then total still
+    # exceeds the total-chars cap and proportional truncation fires.
+    monkeypatch.delenv("TRAWL_RERANK_MAX_DOCS", raising=False)
+    monkeypatch.setenv("TRAWL_RERANK_MAX_PER_DOC_CHARS", "1000")
+    monkeypatch.setenv("TRAWL_RERANK_MAX_CHARS", "3000")
+    docs = ["x" * 5000 for _ in range(10)]  # 50 000 raw chars
+    r_scored, r_docs, tel = _apply_caps("q", _scored(docs), docs)
+    # First per-doc clamps each to 1000 (10 docs × 1000 = 10 000).
+    # Then total-chars budget = (3000 - 1) // 10 = 299 per doc.
+    assert all(len(d) == 299 for d in r_docs)
+    assert len(r_docs) == 10  # doc count preserved
+    # 10 × 5000 raw vs 10 × 299 final
+    assert tel["pre_chars"] == 1 + 50000
+    assert tel["post_chars"] == 1 + 2990
+
+
+def test_per_doc_cap_preserves_capped_predicate(monkeypatch):
+    # PR #40's `capped` boolean uses pre/post comparison. Per-doc cap
+    # firing on its own must still flip the predicate to True so the
+    # PipelineResult.rerank_capped field reflects per-doc activation.
+    monkeypatch.delenv("TRAWL_RERANK_MAX_DOCS", raising=False)
+    monkeypatch.delenv("TRAWL_RERANK_MAX_CHARS", raising=False)
+    monkeypatch.setenv("TRAWL_RERANK_MAX_PER_DOC_CHARS", "1000")
+    docs = ["x" * 2000]
+    _r, r_docs, tel = _apply_caps("q", _scored(docs), docs)
+    capped = tel["pre_docs"] != tel["post_docs"] or tel["pre_chars"] != tel["post_chars"]
+    assert capped is True
+    assert len(r_docs[0]) == 1000
+
+
+def test_per_doc_cap_warning_message_includes_env(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.delenv("TRAWL_RERANK_MAX_DOCS", raising=False)
+    monkeypatch.delenv("TRAWL_RERANK_MAX_CHARS", raising=False)
+    monkeypatch.setenv("TRAWL_RERANK_MAX_PER_DOC_CHARS", "100")
+    docs = ["x" * 500 for _ in range(3)]
+    with caplog.at_level(logging.WARNING, logger="trawl.reranking"):
+        _apply_caps("q", _scored(docs), docs)
+    # Warning fires because per-doc cap truncated each doc.
+    msgs = [r.message for r in caplog.records]
+    assert any("reranker input capped" in m for m in msgs)
+    assert any("MAX_PER_DOC_CHARS" in m for m in msgs)
 
 
 # --- rerank() return-shape tests (0.4.2) -----------------------------------

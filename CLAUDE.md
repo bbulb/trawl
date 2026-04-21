@@ -152,15 +152,21 @@ trawl directory. Humans should read `README.md` first, then
     `docs/superpowers/specs/2026-04-20-playwright-shadow-dom-design.md`.
   - **Reranker chunk-window cap** (default on) —
     `src/trawl/reranking.py` clamps outbound documents to
-    `TRAWL_RERANK_MAX_DOCS` (default `30`) and the query+docs total
-    to `TRAWL_RERANK_MAX_CHARS` (default `40000`) before the POST.
-    Lower-cosine-rank tail chunks are dropped first; remaining docs
-    are proportionally truncated (floor `200` chars each). A
-    single `WARNING` is logged per call when the cap fires. `<= 0`
-    on either env var disables. Defaults were bracketed empirically
-    — 40k passes, 50k fast-rejects — so normal trawl workload
-    (~36k max) never triggers it. See
-    `docs/superpowers/specs/2026-04-20-reranking-chunk-window-cap-design.md`.
+    `TRAWL_RERANK_MAX_DOCS` (default `30`), each individual document
+    to `TRAWL_RERANK_MAX_PER_DOC_CHARS` (default `1500`), and the
+    query+docs total to `TRAWL_RERANK_MAX_CHARS` (default `40000`)
+    before the POST. Lower-cosine-rank tail chunks are dropped
+    first; oversize docs are clamped to the per-doc cap; remaining
+    docs are proportionally truncated (floor `200` chars each) only
+    if the total still exceeds. A single `WARNING` is logged per
+    call when any cap fires. `<= 0` on any env var disables that
+    knob. Defaults were bracketed empirically: 40 k total passes
+    and 50 k fast-rejects on the 8 192-token total context limit;
+    the per-doc 1800 default mirrors `MAX_EMBED_INPUT_CHARS` and
+    sits safely under the per-document 512-token batch limit
+    (PR #41 D2 outcome — observed 2 056 chars → 514 tokens). See
+    `docs/superpowers/specs/2026-04-20-reranking-chunk-window-cap-design.md`
+    and `docs/superpowers/specs/2026-04-21-rerank-per-doc-char-cap-design.md`.
 
 ## Quick Reference
 
@@ -328,7 +334,7 @@ change them, run `tests/test_pipeline.py` before AND after.
 | `pipeline.PROFILE_TRANSFER_MIN_RATIO` | `0.3` | Lower bound of acceptable subtree size ratio for host-transfer. Empirically validated on Google Finance (actual ratios 1.5-1.6x) |
 | `pipeline.PROFILE_TRANSFER_MAX_RATIO` | `3.0` | Upper bound. Raising admits accidental `<body>`-level selector climbs |
 | `reranking.py HTTP_TIMEOUT_S` | `30.0` | Reranker timeout; 20 pairs should complete well within this |
-| `reranking.py DEFAULT_MAX_DOCS / DEFAULT_MAX_CHARS / MIN_PER_DOC_CHARS` | `30 / 40000 / 200` | Defensive chunk-window cap; empirically bracketed between 40k (PASS) and 50k (FAIL) server-side. Raising `DEFAULT_MAX_CHARS` past 40k risks hitting the `bge-reranker-v2-m3` 8192-token validator. Overridable via `TRAWL_RERANK_MAX_DOCS` / `TRAWL_RERANK_MAX_CHARS`. |
+| `reranking.py DEFAULT_MAX_DOCS / DEFAULT_MAX_PER_DOC_CHARS / DEFAULT_MAX_CHARS / MIN_PER_DOC_CHARS` | `30 / 1500 / 40000 / 200` | Defensive chunk-window caps. Total-chars empirically bracketed between 40k (PASS) and 50k (FAIL) on the 8 192-token total context limit. Per-doc-chars empirically bracketed at cap=1500 PASS / cap=1550 FAIL on the captured MDN Fetch_API payload (~3.0-3.5 chars/token for code-heavy English). Overridable via `TRAWL_RERANK_MAX_DOCS` / `TRAWL_RERANK_MAX_PER_DOC_CHARS` / `TRAWL_RERANK_MAX_CHARS`. CJK-heavy content tokenises denser (~1-2 chars/token); if a CJK page reproducibly trips the per-doc 500, lower this default to ~1000. |
 | `reranking.py rerank()` return shape | `tuple[list[ScoredChunk], bool]` | `(scored, capped)`. The boolean drives `PipelineResult.rerank_capped` and the `rerank_capped` JSONL telemetry key. Refactors that drop the second element silently lose the cap-fire signal. Library-internal API only; `fetch_relevant()` is unaffected. |
 | `pipeline.py retrieve_k multiplier` | `2` | Retrieves 2x candidates for reranking; fewer reduces rerank benefit, more adds latency |
 | `profiles/mapper.py DEFAULT_MAX_CANDIDATES_PER_ANCHOR` | `5` | Enough headroom to find non-noise candidates after sidebar/nav filtering |
