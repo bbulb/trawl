@@ -12,17 +12,14 @@ trawl directory. Humans should read `README.md` first, then
 
 ## Current status
 
-- **Version**: 0.4.1 (2026-04-21). Highlights since `v0.4.0`:
-  defensive chunk-window cap on the reranker request (clamps the
-  outbound payload to `TRAWL_RERANK_MAX_DOCS` / `TRAWL_RERANK_MAX_CHARS`
-  before `:8083` — empirically bracketed 40 k PASS / 50 k FAIL against
-  `bge-reranker-v2-m3`'s 8 192-token server-side validator), plus two
-  diagnostic artefacts shipped alongside (reranker `:8083` stability
-  diagnostic and shadow-DOM custom-element catalog tool). Residual
-  MDN small-payload sporadic `500` on the reranker is still open —
-  cosine fallback masks it; next diagnostic spike pre-registered in
-  `notes/next-session-2026-04-21-followups.md`. Full entry in
-  `CHANGELOG.md`.
+- **Version**: 0.4.2 (2026-04-21). Highlights since `v0.4.1`:
+  `PipelineResult.rerank_capped` boolean + JSONL telemetry key for
+  observability of the chunk-window cap fire rate (PR #40), and the
+  MDN sporadic 500 reranker diagnostic that resolved to **D2 (H2)** —
+  a per-document 512-token batch limit on the reranker server,
+  distinct from the 8 192-token total context limit addressed by the
+  PR #38 cap (PR #41). The per-document char cap fix is queued for
+  0.4.3 as a separate pre-registered spike. Full list in `CHANGELOG.md`.
 - **Parity matrix**: 15/15 cases pass (see `tests/test_cases.yaml`).
   `kbo_schedule` pinned to a historical game day to survive KBO
   off-days.
@@ -331,6 +328,7 @@ change them, run `tests/test_pipeline.py` before AND after.
 | `pipeline.PROFILE_TRANSFER_MAX_RATIO` | `3.0` | Upper bound. Raising admits accidental `<body>`-level selector climbs |
 | `reranking.py HTTP_TIMEOUT_S` | `30.0` | Reranker timeout; 20 pairs should complete well within this |
 | `reranking.py DEFAULT_MAX_DOCS / DEFAULT_MAX_CHARS / MIN_PER_DOC_CHARS` | `30 / 40000 / 200` | Defensive chunk-window cap; empirically bracketed between 40k (PASS) and 50k (FAIL) server-side. Raising `DEFAULT_MAX_CHARS` past 40k risks hitting the `bge-reranker-v2-m3` 8192-token validator. Overridable via `TRAWL_RERANK_MAX_DOCS` / `TRAWL_RERANK_MAX_CHARS`. |
+| `reranking.py rerank()` return shape | `tuple[list[ScoredChunk], bool]` | `(scored, capped)`. The boolean drives `PipelineResult.rerank_capped` and the `rerank_capped` JSONL telemetry key. Refactors that drop the second element silently lose the cap-fire signal. Library-internal API only; `fetch_relevant()` is unaffected. |
 | `pipeline.py retrieve_k multiplier` | `2` | Retrieves 2x candidates for reranking; fewer reduces rerank benefit, more adds latency |
 | `profiles/mapper.py DEFAULT_MAX_CANDIDATES_PER_ANCHOR` | `5` | Enough headroom to find non-noise candidates after sidebar/nav filtering |
 | `profiles/mapper.py NOISE_CLS_RE` | `nav\|sidebar\|toc\|...` | Noise region detection for anchor filtering; too broad catches content, too narrow misses sidebars |

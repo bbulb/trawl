@@ -9,6 +9,79 @@ not yet follow semver strictly — expect breaking changes before
 
 _No changes yet._
 
+## [0.4.2] — 2026-04-21
+
+Patch release. Two follow-ups to the 0.4.1 chunk-window cap
+(PR #38):
+
+1. **`PipelineResult.rerank_capped` telemetry** (PR #40) — surfaces
+   whether the cap actually fired on a given fetch as a boolean
+   field plus a new JSONL telemetry key, so cap-fire rates can be
+   tracked offline.
+2. **MDN sporadic 500 reranker diagnostic** (PR #41) — resolved
+   the residual MDN small-payload `500` flagged in 0.4.1's "Known
+   limitations" to gate **D2 (H2)**. Root cause is a **per-document
+   512-token batch limit** on the reranker server, distinct from
+   the 8 192-token total context limit that PR #38 addressed. New
+   capture-and-replay runner ships as a reusable artefact; the
+   per-document char cap fix is queued for 0.4.3 as a separate
+   pre-registered spike.
+
+No production-code changes from PR #41 (diagnostic-only). PR #40's
+`trawl.reranking.rerank()` return signature change is library-
+internal; `fetch_relevant()` and the `PipelineResult` field set are
+purely additive.
+
+### Added
+
+- **`PipelineResult.rerank_capped` telemetry** (PR #40). New boolean
+  field on `PipelineResult` that exposes whether the chunk-window cap
+  introduced in PR #38 actually fired on a given `fetch_relevant()`
+  call. Same predicate as the existing `WARNING` log line in
+  `_apply_caps` (`pre_docs != post_docs or pre_chars != post_chars`).
+  Default `False` for the error path, the passthrough path, and any
+  call where the cap stays inactive. Also surfaced in the opt-in
+  JSONL telemetry (`src/trawl/telemetry.py::_build_event`) as
+  `rerank_capped`, alongside `rerank_used`. Telemetry schema version
+  stays `1` — the new key is additive and existing consumers tolerate
+  unknown fields.
+  Library-internal: `trawl.reranking.rerank()` now returns
+  `tuple[list[ScoredChunk], bool]` (was `list[ScoredChunk]`). The
+  `(scored, capped)` tuple is unpacked at both call sites in
+  `pipeline.py` and at the `--via-trawl` caller in
+  `benchmarks/reranker_stability_diag.py`. `fetch_relevant()`'s public
+  signature is unchanged. See
+  `docs/superpowers/specs/2026-04-21-rerank-cap-telemetry-design.md`.
+
+### Research (no code change, shipped as reusable runner + design doc)
+
+- **MDN sporadic 500 reranker diagnostic — D2** (PR #41). New
+  `benchmarks/reranker_mdn_sporadic_diag.py` capture-and-replay
+  runner. `--capture` intercepts `trawl.reranking.rerank()`'s POST
+  inside a real `fetch_relevant()` call to dump the exact
+  `{"model","query","documents"}` payload to disk; default mode
+  replays the captured payload across six pre-registered sweeps
+  (repetition × 200, gap_0 / gap_500 / gap_5000 × 50, strip × 50,
+  canary × 50 with foreign-payload inserts) and resolves a D0-D5
+  decision per the design-doc gate table. Outcome on this run: **D2
+  (H2 — payload-specific server tokenizer edge)**. MDN payload
+  failed 352/352 (100 %) deterministically; React canary 0/50;
+  stripped MDN variant 50/50 (so HTML entity / Unicode is not the
+  trigger); gap variants identical (so keep-alive drift is not the
+  trigger). The actual server response body —
+  `"input (517 tokens) is too large to process. increase the physical
+  batch size (current batch size: 512)"` — confirms a **per-document
+  512-token batch limit**, distinct from the 8 192-token total
+  context limit addressed by PR #38. The longest captured MDN doc
+  was 2 056 chars ≈ 514 tokens. The original "sporadic" framing
+  came from upstream variance: page rendering / chunk boundary
+  jitter occasionally produces an MDN doc > 512 tokens after the
+  title prefix is added; the reranker itself is deterministic.
+  Follow-up fix candidate (separate spike, queued for 0.4.3):
+  per-document char cap in `_apply_caps` (`TRAWL_RERANK_MAX_PER_DOC_CHARS`,
+  default ~1800). See
+  `docs/superpowers/specs/2026-04-21-reranker-mdn-sporadic-diag-design.md`.
+
 ## [0.4.1] — 2026-04-21
 
 Patch release. Closes the reranker `:8083` reliability follow-up
