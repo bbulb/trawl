@@ -7,7 +7,32 @@ not yet follow semver strictly — expect breaking changes before
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+
+- **Defensive chunk-window cap on the reranker request** (PR #TBD).
+  `src/trawl/reranking.py`'s `rerank()` now clamps its outbound
+  payload to `TRAWL_RERANK_MAX_DOCS` (default `30`) documents and
+  `TRAWL_RERANK_MAX_CHARS` (default `40000`) total characters
+  (`query + docs`) before posting to `:8083`. If the doc-count cap
+  fires, lower-cosine-rank tail chunks are dropped; if the char cap
+  fires, each remaining doc is proportionally truncated (floor
+  `200` chars to keep some signal). A single `WARNING` is logged
+  when either cap activates. `<= 0` on either env var disables the
+  cap (sentinel for the measurement sanity path). Rationale: the
+  2026-04-20 stability diagnostic (PR #36) confirmed that
+  `bge-reranker-v2-m3`'s server-side validator fast-rejects requests
+  beyond its 8 192-token context with HTTP 500. Follow-up spike
+  bracketed the empirical threshold between 40 000 chars (passes)
+  and 50 000 chars (fails); 50 synthetic large-burst requests went
+  from 100 % fast-reject without the cap to 0 % failure with it,
+  while the 15-case parity matrix stayed 15/15 and the 16-pattern
+  `code_heavy_query` slice remained unchanged (1 pre-existing,
+  external flake unrelated to this change — `curl_options` budget).
+  New `--via-trawl` mode in `benchmarks/reranker_stability_diag.py`
+  routes burst requests through `trawl.reranking.rerank()` so the
+  cap is exercised; the original direct-HTTP mode is retained for
+  threshold bracketing. See
+  `docs/superpowers/specs/2026-04-20-reranking-chunk-window-cap-design.md`.
 
 ## [0.4.0] — 2026-04-20
 

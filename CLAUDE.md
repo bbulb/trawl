@@ -150,6 +150,17 @@ trawl directory. Humans should read `README.md` first, then
     with a companion measurement: each addition must fix a specific
     pattern and not regress the other 15. See
     `docs/superpowers/specs/2026-04-20-playwright-shadow-dom-design.md`.
+  - **Reranker chunk-window cap** (default on) —
+    `src/trawl/reranking.py` clamps outbound documents to
+    `TRAWL_RERANK_MAX_DOCS` (default `30`) and the query+docs total
+    to `TRAWL_RERANK_MAX_CHARS` (default `40000`) before the POST.
+    Lower-cosine-rank tail chunks are dropped first; remaining docs
+    are proportionally truncated (floor `200` chars each). A
+    single `WARNING` is logged per call when the cap fires. `<= 0`
+    on either env var disables. Defaults were bracketed empirically
+    — 40k passes, 50k fast-rejects — so normal trawl workload
+    (~36k max) never triggers it. See
+    `docs/superpowers/specs/2026-04-20-reranking-chunk-window-cap-design.md`.
 
 ## Quick Reference
 
@@ -317,6 +328,7 @@ change them, run `tests/test_pipeline.py` before AND after.
 | `pipeline.PROFILE_TRANSFER_MIN_RATIO` | `0.3` | Lower bound of acceptable subtree size ratio for host-transfer. Empirically validated on Google Finance (actual ratios 1.5-1.6x) |
 | `pipeline.PROFILE_TRANSFER_MAX_RATIO` | `3.0` | Upper bound. Raising admits accidental `<body>`-level selector climbs |
 | `reranking.py HTTP_TIMEOUT_S` | `30.0` | Reranker timeout; 20 pairs should complete well within this |
+| `reranking.py DEFAULT_MAX_DOCS / DEFAULT_MAX_CHARS / MIN_PER_DOC_CHARS` | `30 / 40000 / 200` | Defensive chunk-window cap; empirically bracketed between 40k (PASS) and 50k (FAIL) server-side. Raising `DEFAULT_MAX_CHARS` past 40k risks hitting the `bge-reranker-v2-m3` 8192-token validator. Overridable via `TRAWL_RERANK_MAX_DOCS` / `TRAWL_RERANK_MAX_CHARS`. |
 | `pipeline.py retrieve_k multiplier` | `2` | Retrieves 2x candidates for reranking; fewer reduces rerank benefit, more adds latency |
 | `profiles/mapper.py DEFAULT_MAX_CANDIDATES_PER_ANCHOR` | `5` | Enough headroom to find non-noise candidates after sidebar/nav filtering |
 | `profiles/mapper.py NOISE_CLS_RE` | `nav\|sidebar\|toc\|...` | Noise region detection for anchor filtering; too broad catches content, too narrow misses sidebars |

@@ -1,13 +1,22 @@
 """Reranker `:8083` stability diagnostic.
 
-Standalone script — does NOT go through `trawl.reranking.rerank()`.
-Hits `bge-reranker-v2-m3` at the configured URL directly with a
-sequence of rerank requests that vary payload size (doc count and
-doc length), looking for patterns in the intermittent HTTP 500
-observed across 2026-04-20 spike measurements (PR #31/#32/#33/#34).
+Two modes:
+
+- ``direct`` (default) — bypasses ``trawl.reranking.rerank()`` and hits
+  ``bge-reranker-v2-m3`` at the configured URL directly. Reproduces
+  the server-side input-validator failure mode (D2 in the original
+  diagnostic, 2026-04-20).
+
+- ``--via-trawl`` — routes requests through ``trawl.reranking.rerank()``
+  so any client-side defensive caps (``TRAWL_RERANK_MAX_DOCS`` /
+  ``TRAWL_RERANK_MAX_CHARS``) are exercised. Used to validate the
+  chunk-window cap follow-up spike. A failure is inferred from the
+  ``reranker unavailable, falling back to cosine`` log record.
 
 Pre-registered decision gates (design doc
-``docs/superpowers/specs/2026-04-20-reranker-stability-diag-design.md``):
+``docs/superpowers/specs/2026-04-20-reranker-stability-diag-design.md``
+and its follow-up
+``docs/superpowers/specs/2026-04-20-reranking-chunk-window-cap-design.md``):
 
     D1 — failure rate < 1% → no follow-up needed right now.
     D2 — payload size correlates with failure → chunk-window cap
@@ -20,6 +29,7 @@ Invoke:
     python benchmarks/reranker_stability_diag.py
     python benchmarks/reranker_stability_diag.py --burst-size 100
     python benchmarks/reranker_stability_diag.py --url http://localhost:8083/v1
+    python benchmarks/reranker_stability_diag.py --via-trawl
 
 Writes `benchmarks/results/reranker-stability-diag/<ts>/`:
     diag.json   per-request raw data + aggregates + decision hint
@@ -34,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import statistics
 import sys
@@ -45,6 +56,13 @@ from typing import Any
 import httpx
 
 BENCH_DIR = Path(__file__).resolve().parent
+# Add repo src/ to sys.path so `trawl.reranking` can be imported in
+# `--via-trawl` mode without requiring a prior `pip install -e .`.
+REPO_ROOT = BENCH_DIR.parent
+SRC_DIR = REPO_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
 RESULTS_ROOT = BENCH_DIR / "results" / "reranker-stability-diag"
 
 DEFAULT_URL = os.environ.get("TRAWL_RERANK_URL", "http://localhost:8083/v1")
@@ -129,6 +147,124 @@ def _call_rerank(
         )
 
 
+# ---- --via-trawl path ---------------------------------------------------
+#
+# Build synthetic ScoredChunk objects, route through trawl.reranking.rerank()
+# and infer per-request outcome from the `trawl.reranking` logger. A
+# "reranker unavailable, falling back to cosine" WARNING is treated as a
+# failure (the pipeline's client-side view of a server error). A "reranker
+# input capped" WARNING is informational (the new cap logic firing).
+
+
+class _ViaTrawlContext:
+    """Holds the logging capture handler + last-call state shared across
+    a diagnostic run.
+
+    The caller attaches this to the ``trawl.reranking`` logger for the
+    duration of the run and consults ``last_fallback`` / ``cap_fires``
+    after each ``rerank()`` call.
+    """
+
+    def __init__(self) -> None:
+        self.last_fallback_msg: str | None = None
+        self.cap_fires = 0
+
+        logger = self
+
+        class _Handler(logging.Handler):
+            def emit(self_handler, record: logging.LogRecord) -> None:
+                msg = record.getMessage()
+                if "falling back to cosine" in msg:
+                    logger.last_fallback_msg = msg
+                elif "reranker input capped" in msg:
+                    logger.cap_fires += 1
+
+        self.handler = _Handler(level=logging.WARNING)
+
+    def install(self) -> None:
+        logging.getLogger("trawl.reranking").addHandler(self.handler)
+        logging.getLogger("trawl.reranking").setLevel(logging.WARNING)
+
+    def uninstall(self) -> None:
+        logging.getLogger("trawl.reranking").removeHandler(self.handler)
+
+    def reset_last(self) -> None:
+        self.last_fallback_msg = None
+
+
+def _build_synthetic_scored(docs: list[str]):
+    """Turn the synthetic ``docs`` used in direct mode into a list of
+    ``ScoredChunk`` with just enough fields populated for ``rerank()`` to
+    assemble its reranker-input strings (``embed_text`` drives the body,
+    ``heading`` drives the section prefix)."""
+    from trawl.chunking import Chunk
+    from trawl.retrieval import ScoredChunk
+
+    scored = []
+    for i, body in enumerate(docs):
+        # Leave heading empty so rerank()'s prefix logic emits the body
+        # as-is -- keeps the outbound payload byte-equivalent to the
+        # direct-mode call within a small margin.
+        chunk = Chunk(
+            text=body,
+            heading_path=[],
+            char_count=len(body),
+            chunk_index=i,
+            embed_text=body,
+        )
+        scored.append(ScoredChunk(chunk=chunk, score=1.0 - i / max(1, len(docs))))
+    return scored
+
+
+def _call_rerank_via_trawl(
+    ctx: _ViaTrawlContext,
+    base_url: str,
+    model: str,
+    query: str,
+    docs: list[str],
+    index: int,
+    burst: str,
+    *,
+    k: int = 10,
+) -> RerankCall:
+    from trawl import reranking as trawl_reranking
+
+    doc_char_total = sum(len(d) for d in docs) + len(query)
+    ctx.reset_last()
+
+    t0 = time.monotonic()
+    try:
+        trawl_reranking.rerank(
+            query,
+            _build_synthetic_scored(docs),
+            k=k,
+            page_title="",
+            base_url=base_url,
+            model=model,
+        )
+        elapsed = int((time.monotonic() - t0) * 1000)
+    except Exception as e:  # rerank() is supposed to catch its own errors
+        elapsed = int((time.monotonic() - t0) * 1000)
+        return RerankCall(
+            index=index, burst=burst, http_status=None,
+            elapsed_ms=elapsed, n_docs=len(docs),
+            doc_char_total=doc_char_total, ok=False,
+            error=f"{type(e).__name__}: {e}",
+        )
+
+    if ctx.last_fallback_msg:
+        return RerankCall(
+            index=index, burst=burst, http_status=None,
+            elapsed_ms=elapsed, n_docs=len(docs),
+            doc_char_total=doc_char_total, ok=False,
+            error=f"fallback: {ctx.last_fallback_msg}",
+        )
+    return RerankCall(
+        index=index, burst=burst, http_status=200, elapsed_ms=elapsed,
+        n_docs=len(docs), doc_char_total=doc_char_total, ok=True,
+    )
+
+
 def _check_health(url: str) -> tuple[bool, int | None]:
     health = url.rsplit("/v1", 1)[0] + "/health"
     try:
@@ -142,12 +278,19 @@ def _run_burst(
     client: httpx.Client, base_url: str, model: str,
     name: str, n_requests: int, n_docs: int, doc_len: int,
     verbose: bool,
+    *,
+    via_trawl_ctx: _ViaTrawlContext | None = None,
 ) -> list[RerankCall]:
     docs = _build_docs(n_docs, doc_len)
     query = f"locate the optimal configuration for {name}"
     calls: list[RerankCall] = []
     for i in range(n_requests):
-        c = _call_rerank(client, base_url, model, query, docs, i, name)
+        if via_trawl_ctx is not None:
+            c = _call_rerank_via_trawl(
+                via_trawl_ctx, base_url, model, query, docs, i, name,
+            )
+        else:
+            c = _call_rerank(client, base_url, model, query, docs, i, name)
         calls.append(c)
         if verbose and (i == 0 or (i + 1) % 10 == 0 or not c.ok):
             tag = "OK " if c.ok else f"FAIL {c.http_status or '---'}"
@@ -247,7 +390,14 @@ def _render_md(summary: dict[str, Any]) -> str:
     lines.append("")
     lines.append(f"**URL:** `{summary['url']}`")
     lines.append(f"**Model:** `{summary['model']}`")
+    lines.append(f"**Mode:** `{summary.get('mode', 'direct')}`")
     lines.append(f"**Burst size:** {summary['burst_size']}")
+    cap = summary.get("cap_telemetry")
+    if cap is not None:
+        lines.append(
+            f"**Cap telemetry:** fires={cap['cap_fires']} "
+            f"MAX_DOCS={cap['max_docs_env']} MAX_CHARS={cap['max_chars_env']}"
+        )
     lines.append("")
     gate = summary["decision"]
     lines.append(f"## Decision hint: `{gate['code']}`")
@@ -303,6 +453,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--burst-size", type=int, default=50)
     parser.add_argument("--verbose", "-v", action="store_true")
+    parser.add_argument(
+        "--via-trawl",
+        action="store_true",
+        help=(
+            "Route each request through trawl.reranking.rerank() so the "
+            "client-side caps (TRAWL_RERANK_MAX_DOCS / _MAX_CHARS) are "
+            "exercised. Failures are inferred from the 'falling back to "
+            "cosine' WARNING emitted by rerank()."
+        ),
+    )
     args = parser.parse_args(argv)
 
     ok, status = _check_health(args.url)
@@ -327,30 +487,48 @@ def main(argv: list[str] | None = None) -> int:
     canaries: list[dict[str, Any]] = []
     health_checks: list[dict[str, Any]] = [{"label": "start", "ok": ok, "status": status}]
 
-    with httpx.Client(timeout=30.0) as client:
-        # Warmup: 3 canary requests
-        print("\n[warmup]", file=sys.stderr)
-        for i in range(3):
-            c = _call_rerank(client, args.url, args.model, CANARY_QUERY, CANARY_DOCS, i, "warmup")
-            if args.verbose:
-                tag = "OK" if c.ok else "FAIL"
-                print(f"  warmup {i} {tag} {c.elapsed_ms}ms", file=sys.stderr)
+    via_trawl_ctx: _ViaTrawlContext | None = None
+    if args.via_trawl:
+        via_trawl_ctx = _ViaTrawlContext()
+        via_trawl_ctx.install()
+        print(
+            f"[via-trawl] using trawl.reranking.rerank() "
+            f"TRAWL_RERANK_MAX_DOCS={os.environ.get('TRAWL_RERANK_MAX_DOCS', '(default)')} "
+            f"TRAWL_RERANK_MAX_CHARS={os.environ.get('TRAWL_RERANK_MAX_CHARS', '(default)')}",
+            file=sys.stderr,
+        )
 
-        for name, cfg in burst_configs.items():
-            print(f"\n[burst {name}] {args.burst_size} × {cfg['n_docs']} docs × {cfg['doc_len']} chars", file=sys.stderr)
-            calls = _run_burst(
-                client, args.url, args.model, name,
-                args.burst_size, cfg["n_docs"], cfg["doc_len"],
-                args.verbose,
-            )
-            all_calls.extend(calls)
-            per_burst[name] = _aggregate(calls)
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            # Warmup: 3 canary requests. Always run direct-mode canary so a
+            # broken rerank() path does not mask server health.
+            print("\n[warmup]", file=sys.stderr)
+            for i in range(3):
+                c = _call_rerank(client, args.url, args.model, CANARY_QUERY, CANARY_DOCS, i, "warmup")
+                if args.verbose:
+                    tag = "OK" if c.ok else "FAIL"
+                    print(f"  warmup {i} {tag} {c.elapsed_ms}ms", file=sys.stderr)
 
-            # Canary after each burst
-            cn = _call_rerank(client, args.url, args.model, CANARY_QUERY, CANARY_DOCS, 0, f"canary_{name}")
-            canaries.append(asdict(cn))
-            ok2, status2 = _check_health(args.url)
-            health_checks.append({"label": f"after_{name}", "ok": ok2, "status": status2})
+            for name, cfg in burst_configs.items():
+                print(f"\n[burst {name}] {args.burst_size} × {cfg['n_docs']} docs × {cfg['doc_len']} chars", file=sys.stderr)
+                calls = _run_burst(
+                    client, args.url, args.model, name,
+                    args.burst_size, cfg["n_docs"], cfg["doc_len"],
+                    args.verbose,
+                    via_trawl_ctx=via_trawl_ctx,
+                )
+                all_calls.extend(calls)
+                per_burst[name] = _aggregate(calls)
+
+                # Canary after each burst - always direct-mode to probe
+                # server state independently of the via_trawl path.
+                cn = _call_rerank(client, args.url, args.model, CANARY_QUERY, CANARY_DOCS, 0, f"canary_{name}")
+                canaries.append(asdict(cn))
+                ok2, status2 = _check_health(args.url)
+                health_checks.append({"label": f"after_{name}", "ok": ok2, "status": status2})
+    finally:
+        if via_trawl_ctx is not None:
+            via_trawl_ctx.uninstall()
 
     overall = _aggregate(all_calls)
     decision_code, decision_text = _decide_gate(overall["failure_rate"], per_burst)
@@ -359,6 +537,7 @@ def main(argv: list[str] | None = None) -> int:
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "url": args.url,
         "model": args.model,
+        "mode": "via_trawl" if args.via_trawl else "direct",
         "burst_size": args.burst_size,
         "burst_configs": burst_configs,
         "overall": overall,
@@ -368,6 +547,12 @@ def main(argv: list[str] | None = None) -> int:
         "decision": {"code": decision_code, "text": decision_text},
         "raw_calls": [asdict(c) for c in all_calls],
     }
+    if via_trawl_ctx is not None:
+        summary["cap_telemetry"] = {
+            "cap_fires": via_trawl_ctx.cap_fires,
+            "max_docs_env": os.environ.get("TRAWL_RERANK_MAX_DOCS", "(default)"),
+            "max_chars_env": os.environ.get("TRAWL_RERANK_MAX_CHARS", "(default)"),
+        }
     (out_dir / "diag.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False),
         encoding="utf-8",
