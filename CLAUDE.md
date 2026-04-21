@@ -12,14 +12,16 @@ trawl directory. Humans should read `README.md` first, then
 
 ## Current status
 
-- **Version**: 0.4.0 (2026-04-20). Highlights since `v0.3.0`: shadow-
-  DOM unwrap for code-block custom elements (default on — MDN-style
-  `<mdn-code-example>` pages now extract their code bodies), Stack
-  Exchange URL corrections (SO/SF patterns resolved to unrelated
-  questions pre-fix), and four research spikes whose measurements
-  are preserved as reusable runners (C6 RRF-k, id-aware BM25
-  tokenizer, HyDE → BM25 extras, MDN reranker diagnostic). C6
-  follow-up chain closed at `code_heavy_query` 16/16. Full list in
+- **Version**: 0.4.1 (2026-04-21). Highlights since `v0.4.0`:
+  defensive chunk-window cap on the reranker request (clamps the
+  outbound payload to `TRAWL_RERANK_MAX_DOCS` / `TRAWL_RERANK_MAX_CHARS`
+  before `:8083` — empirically bracketed 40 k PASS / 50 k FAIL against
+  `bge-reranker-v2-m3`'s 8 192-token server-side validator), plus two
+  diagnostic artefacts shipped alongside (reranker `:8083` stability
+  diagnostic and shadow-DOM custom-element catalog tool). Residual
+  MDN small-payload sporadic `500` on the reranker is still open —
+  cosine fallback masks it; next diagnostic spike pre-registered in
+  `notes/next-session-2026-04-21-followups.md`. Full entry in
   `CHANGELOG.md`.
 - **Parity matrix**: 15/15 cases pass (see `tests/test_cases.yaml`).
   `kbo_schedule` pinned to a historical game day to survive KBO
