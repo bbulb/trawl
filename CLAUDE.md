@@ -12,14 +12,16 @@ trawl directory. Humans should read `README.md` first, then
 
 ## Current status
 
-- **Version**: 0.4.3 (2026-04-21). Highlights since `v0.4.2`:
-  per-document char cap on the reranker payload
-  (`TRAWL_RERANK_MAX_PER_DOC_CHARS=1500` default) closes the residual
-  MDN small-payload 500 flagged by PR #41's D2 diagnostic — flips the
-  MDN sporadic diag from 100 % failure to 0 % (D0). Previously
-  shipped in 0.4.1/0.4.2: defensive chunk-window cap (PR #38),
-  `PipelineResult.rerank_capped` telemetry (PR #40), MDN sporadic
-  500 reranker diagnostic (PR #41). Full list in `CHANGELOG.md`.
+- **Version**: 0.4.4 (2026-04-22). Highlights since `v0.4.3`:
+  `TRAWL_CHUNK_BUDGET` default flipped from `0` (disabled) to `100`
+  (BM25 prefilter on) (PR #46) — closes future-work item #4 from the
+  longform-retrieval-cost design and resolves the
+  `claude_code_man_curl_options` curl.se manpage latency regression
+  (p95 25149 → 3065 ms, 88 %). Also ships the CJK per-doc cap
+  validation spike (PR #45, research-only). Previously shipped in
+  0.4.3: per-document char cap on the reranker payload
+  (`TRAWL_RERANK_MAX_PER_DOC_CHARS=1500` default, PR #43). Full list
+  in `CHANGELOG.md`.
 - **Parity matrix**: 15/15 cases pass (see `tests/test_cases.yaml`).
   `kbo_schedule` pinned to a historical game day to survive KBO
   off-days.

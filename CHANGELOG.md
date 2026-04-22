@@ -7,10 +7,26 @@ not yet follow semver strictly — expect breaking changes before
 
 ## [Unreleased]
 
+_No changes yet._
+
+## [0.4.4] — 2026-04-22
+
+Patch release. Flips the `TRAWL_CHUNK_BUDGET` default from `0`
+(disabled) to `100` (BM25 prefilter on) — closes future-work item #4
+from the original longform-retrieval-cost design and resolves the
+`claude_code_man_curl_options` latency regression on curl.se's 275 KB
+manpage (p95 25149 → 3065 ms, 88 % reduction). Also ships the
+pre-registered CJK validation spike for the per-doc cap added in
+0.4.3 (no code change; reusable runner + design doc only).
+
+Single-line default change in `pipeline.py` plus CLAUDE.md status
+prose. No breaking changes: opt out via `TRAWL_CHUNK_BUDGET=0` to
+restore prior behaviour.
+
 ### Changed
 
 - **`TRAWL_CHUNK_BUDGET` default flipped from `0` (disabled) to `100`
-  (enabled)** — completes future-work item #4 in the original
+  (enabled)** (PR #46) — completes future-work item #4 in the original
   longform-retrieval-cost design. Triggered by `claude_code_man_curl_options`
   regression (curl.se manpage, 275 KB / 760 chunks): p95 **25149 → 3065
   ms (88% reduction)** under the new default, with `chunks=12` assertion
