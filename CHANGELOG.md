@@ -9,6 +9,56 @@ not yet follow semver strictly — expect breaking changes before
 
 _No changes yet._
 
+## [0.4.4] — 2026-04-22
+
+Patch release. Flips the `TRAWL_CHUNK_BUDGET` default from `0`
+(disabled) to `100` (BM25 prefilter on) — closes future-work item #4
+from the original longform-retrieval-cost design and resolves the
+`claude_code_man_curl_options` latency regression on curl.se's 275 KB
+manpage (p95 25149 → 3065 ms, 88 % reduction). Also ships the
+pre-registered CJK validation spike for the per-doc cap added in
+0.4.3 (no code change; reusable runner + design doc only).
+
+Single-line default change in `pipeline.py` plus CLAUDE.md status
+prose. No breaking changes: opt out via `TRAWL_CHUNK_BUDGET=0` to
+restore prior behaviour.
+
+### Changed
+
+- **`TRAWL_CHUNK_BUDGET` default flipped from `0` (disabled) to `100`
+  (enabled)** (PR #46) — completes future-work item #4 in the original
+  longform-retrieval-cost design. Triggered by `claude_code_man_curl_options`
+  regression (curl.se manpage, 275 KB / 760 chunks): p95 **25149 → 3065
+  ms (88% reduction)** under the new default, with `chunks=12` assertion
+  unchanged. Pre-registered gate re-measured on the new default: parity
+  15/15, agent_patterns coding 23/24 (the 1 fail is pre-existing
+  `arxiv_pdf_lora` fetcher fail, unrelated to chunk budget). Opt out via
+  `TRAWL_CHUNK_BUDGET=0`. Design doc:
+  `docs/superpowers/specs/2026-04-22-chunk-budget-default-on-design.md`.
+
+### Research (no code change, shipped as reusable runner + design doc)
+
+- **CJK per-doc cap validation — D-VALIDATE** (PR #45). New
+  `benchmarks/cjk_per_doc_cap_validation.py` capture-and-replay runner.
+  Pre-registered follow-up to PR #43 — PR #43's design-doc risk section
+  flagged that pure CJK (~1-2 chars/token) might tokenise a 1500-char
+  doc to ~1500 tokens, above the 512-token per-doc batch limit on
+  `bge-reranker-v2-m3`. This spike captured the rerank payload on
+  Korean Wikipedia 이순신 + Japanese Wikipedia 寿司, replayed each
+  against `:8083` 200 times (N=400 total). **Result: 0 / 400
+  failures (0.0%) on both fixtures**. Observed longest chunks: Korean
+  311 chars (≈ 207 tokens), Japanese 321 chars (≈ 214 tokens). The
+  chunker's 450-char target combined with denser CJK sentence
+  boundaries keeps CJK chunks well under the cap boundary — the 1500
+  cap is effectively inert on CJK prose, not because the cap is
+  sufficient at the boundary but because chunker-level limits bite
+  first. PR #43's risk section and CLAUDE.md's reranking row have
+  been updated with the validation result. No code change. Caveats:
+  two-fixture scope, Chinese not covered, chunker coupling noted —
+  if a Chinese or future CJK page reproducibly trips the per-doc 500
+  (visible via PR #40's `rerank_capped` telemetry), revisit. Design
+  doc: `docs/superpowers/specs/2026-04-21-cjk-per-doc-cap-validation-design.md`.
+
 ## [0.4.3] — 2026-04-21
 
 Patch release. Ships the per-document char cap follow-up pre-

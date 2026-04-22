@@ -113,13 +113,13 @@ benchmark locally to regenerate.
 - **Cross-encoder reranking** (bge-reranker-v2-m3) on the top 2×
   candidates. Falls back gracefully to cosine-only if the reranker
   server is down.
-- **Chunk budget for longform pages** (opt-in). Set
-  `TRAWL_CHUNK_BUDGET=100` (or any positive int) to cap the pool sent
-  to bge-m3: when a page produces more chunks than the budget, the
-  BM25 scorer keeps the top-N and the rest are dropped before
-  embedding. Cuts retrieval cost on Wikipedia / arXiv-scale pages
-  (measured ~69% `retrieval_ms.p95` reduction across four longform
-  cases with rank-1 identity preserved).
+- **Chunk budget for longform pages** (default on). When a page
+  produces more chunks than `TRAWL_CHUNK_BUDGET` (default 100), a
+  BM25 prefilter keeps the top-N and drops the rest before
+  embedding. Cuts retrieval cost on Wikipedia / arXiv / long manpage
+  scale pages (~69% `retrieval_ms.p95` reduction on longform
+  fixtures; rank-1 identity preserved). Opt out via
+  `TRAWL_CHUNK_BUDGET=0`.
 - **Optional HyDE query expansion** for queries where the literal
   words don't match the page vocabulary. Off by default.
 - **VLM page profiling** (optional) — when the same site is visited

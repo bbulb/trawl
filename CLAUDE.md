@@ -12,14 +12,16 @@ trawl directory. Humans should read `README.md` first, then
 
 ## Current status
 
-- **Version**: 0.4.3 (2026-04-21). Highlights since `v0.4.2`:
-  per-document char cap on the reranker payload
-  (`TRAWL_RERANK_MAX_PER_DOC_CHARS=1500` default) closes the residual
-  MDN small-payload 500 flagged by PR #41's D2 diagnostic — flips the
-  MDN sporadic diag from 100 % failure to 0 % (D0). Previously
-  shipped in 0.4.1/0.4.2: defensive chunk-window cap (PR #38),
-  `PipelineResult.rerank_capped` telemetry (PR #40), MDN sporadic
-  500 reranker diagnostic (PR #41). Full list in `CHANGELOG.md`.
+- **Version**: 0.4.4 (2026-04-22). Highlights since `v0.4.3`:
+  `TRAWL_CHUNK_BUDGET` default flipped from `0` (disabled) to `100`
+  (BM25 prefilter on) (PR #46) — closes future-work item #4 from the
+  longform-retrieval-cost design and resolves the
+  `claude_code_man_curl_options` curl.se manpage latency regression
+  (p95 25149 → 3065 ms, 88 %). Also ships the CJK per-doc cap
+  validation spike (PR #45, research-only). Previously shipped in
+  0.4.3: per-document char cap on the reranker payload
+  (`TRAWL_RERANK_MAX_PER_DOC_CHARS=1500` default, PR #43). Full list
+  in `CHANGELOG.md`.
 - **Parity matrix**: 15/15 cases pass (see `tests/test_cases.yaml`).
   `kbo_schedule` pinned to a historical game day to survive KBO
   off-days.
@@ -29,9 +31,11 @@ trawl directory. Humans should read `README.md` first, then
   cases; profile-cached mode ~30x.
 - **WCXB external benchmark**: trawl `html_to_markdown` F1 = 0.777 vs
   Trafilatura baseline 0.750 on the 1,497-page dev split.
-- **Longform retrieval cost (opt-in)**: `TRAWL_CHUNK_BUDGET=100` cuts
-  retrieval_ms.p95 69% on 4 longform cases (wiki_history, arxiv_pdf,
-  wiki_llm, korean_wiki_person) with 4/4 rank-1 identity preserved.
+- **Longform retrieval cost (default on, 2026-04-22)**: `TRAWL_CHUNK_BUDGET`
+  default flipped from `0` to `100` after re-validating on curl.se
+  manpage (275 KB / 760 chunks, p95 25149 ms → 3065 ms). Parity 15/15
+  + agent_patterns coding 23/24 (pre-existing unrelated `arxiv_pdf_lora`
+  fetcher fail) preserved. Opt out via `TRAWL_CHUNK_BUDGET=0`.
 
 ### What a new session should do first
 
@@ -120,17 +124,21 @@ trawl directory. Humans should read `README.md` first, then
     conservative in the `code_heavy_query` A/B measurement (no content
     regression, no assertion wins). Tune via `TRAWL_HYBRID_RRF_K`
     (default 60). See `notes/c6-hybrid-measurement.md` for A/B results.
-  - **Chunk budget prefilter** (longform follow-up, **default off**,
-    opt-in) — `TRAWL_CHUNK_BUDGET=100` (or any positive int) caps the
+  - **Chunk budget prefilter** (longform follow-up, **default on since
+    2026-04-22**, opt-out via `TRAWL_CHUNK_BUDGET=0`) —
+    `TRAWL_CHUNK_BUDGET=100` is the default; any positive int caps the
     pool sent to bge-m3. When a page's chunk count exceeds the budget,
     the BM25 scorer from C6 ranks the chunks and only the top-N reach
     the embedding stage; reranker input window unchanged. Reuses the
     C6 tokenizer, so the flag stacks with `TRAWL_HYBRID_RETRIEVAL=1`.
-    Measurement at budget=100 on 4 longform cases cuts overall
+    Original measurement at budget=100 on 4 longform cases cut
     retrieval_ms.p95 from 6,002 ms to 1,890 ms (69%) with 4/4 rank-1
-    identity preserved. `PipelineResult.n_chunks_embedded` reports the
-    post-prefilter count. See
-    `docs/superpowers/specs/2026-04-20-longform-retrieval-cost-design.md`.
+    identity preserved. Re-validated 2026-04-22 on curl.se manpage
+    (p95 25149 ms → 3065 ms) and full parity + coding agent_patterns
+    (15/15, 23/24 baseline preserved). `PipelineResult.n_chunks_embedded`
+    reports the post-prefilter count. See
+    `docs/superpowers/specs/2026-04-20-longform-retrieval-cost-design.md`
+    and `docs/superpowers/specs/2026-04-22-chunk-budget-default-on-design.md`.
   - **Shadow-DOM unwrap for code-block custom elements** (default on)
     — `fetchers/playwright.py` inlines each matching element's
     `shadowRoot`'s `pre > code` textContent (wrapped in a fresh
@@ -333,7 +341,7 @@ change them, run `tests/test_pipeline.py` before AND after.
 | `pipeline.PROFILE_TRANSFER_MIN_RATIO` | `0.3` | Lower bound of acceptable subtree size ratio for host-transfer. Empirically validated on Google Finance (actual ratios 1.5-1.6x) |
 | `pipeline.PROFILE_TRANSFER_MAX_RATIO` | `3.0` | Upper bound. Raising admits accidental `<body>`-level selector climbs |
 | `reranking.py HTTP_TIMEOUT_S` | `30.0` | Reranker timeout; 20 pairs should complete well within this |
-| `reranking.py DEFAULT_MAX_DOCS / DEFAULT_MAX_PER_DOC_CHARS / DEFAULT_MAX_CHARS / MIN_PER_DOC_CHARS` | `30 / 1500 / 40000 / 200` | Defensive chunk-window caps. Total-chars empirically bracketed between 40k (PASS) and 50k (FAIL) on the 8 192-token total context limit. Per-doc-chars empirically bracketed at cap=1500 PASS / cap=1550 FAIL on the captured MDN Fetch_API payload (~3.0-3.5 chars/token for code-heavy English). Overridable via `TRAWL_RERANK_MAX_DOCS` / `TRAWL_RERANK_MAX_PER_DOC_CHARS` / `TRAWL_RERANK_MAX_CHARS`. CJK-heavy content tokenises denser (~1-2 chars/token); if a CJK page reproducibly trips the per-doc 500, lower this default to ~1000. |
+| `reranking.py DEFAULT_MAX_DOCS / DEFAULT_MAX_PER_DOC_CHARS / DEFAULT_MAX_CHARS / MIN_PER_DOC_CHARS` | `30 / 1500 / 40000 / 200` | Defensive chunk-window caps. Total-chars empirically bracketed between 40k (PASS) and 50k (FAIL) on the 8 192-token total context limit. Per-doc-chars empirically bracketed at cap=1500 PASS / cap=1550 FAIL on the captured MDN Fetch_API payload (~3.0-3.5 chars/token for code-heavy English). CJK validated 2026-04-21 (Korean 이순신 wiki + Japanese 寿司 wiki, 0/400 failures at default 1500): chunker-level `max_chars=450` combined with denser CJK sentence boundaries caps observed CJK chunks near ~300 chars, well under the cap boundary. Overridable via `TRAWL_RERANK_MAX_DOCS` / `TRAWL_RERANK_MAX_PER_DOC_CHARS` / `TRAWL_RERANK_MAX_CHARS`. If a Chinese or future CJK page reproducibly trips the per-doc 500, lower this default to ~1000. |
 | `reranking.py rerank()` return shape | `tuple[list[ScoredChunk], bool]` | `(scored, capped)`. The boolean drives `PipelineResult.rerank_capped` and the `rerank_capped` JSONL telemetry key. Refactors that drop the second element silently lose the cap-fire signal. Library-internal API only; `fetch_relevant()` is unaffected. |
 | `pipeline.py retrieve_k multiplier` | `2` | Retrieves 2x candidates for reranking; fewer reduces rerank benefit, more adds latency |
 | `profiles/mapper.py DEFAULT_MAX_CANDIDATES_PER_ANCHOR` | `5` | Enough headroom to find non-noise candidates after sidebar/nav filtering |
