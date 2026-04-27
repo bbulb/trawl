@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import pytest
 
@@ -153,3 +154,61 @@ def test_build_skip_result_marks_optional_provider_not_configured():
     assert result["status"] == "skipped"
     assert result["failure_phase"] == "not_configured"
     assert result["error"] == "FIRECRAWL_API_KEY not set"
+
+
+def test_write_outputs_creates_jsonl_csv_and_markdown(tmp_path: Path):
+    results = [
+        {
+            "case_id": "mdn_fetch_post",
+            "category": "docs",
+            "provider": "trawl",
+            "status": "ok",
+            "latency_ms": 25,
+            "tokens_returned": 40,
+            "n_chunks_total": 3,
+            "recall_at_k": 1.0,
+            "mrr_at_k": 1.0,
+            "answer_grounding_hit": True,
+            "failure_phase": None,
+            "missing_facts": [],
+            "error": None,
+        },
+        {
+            "case_id": "mdn_fetch_post",
+            "category": "docs",
+            "provider": "firecrawl",
+            "status": "skipped",
+            "latency_ms": 0,
+            "tokens_returned": 0,
+            "n_chunks_total": None,
+            "recall_at_k": 0.0,
+            "mrr_at_k": 0.0,
+            "answer_grounding_hit": False,
+            "failure_phase": "not_configured",
+            "missing_facts": ["post"],
+            "error": "FIRECRAWL_API_KEY not set",
+        },
+    ]
+
+    rc.write_outputs(tmp_path, results)
+
+    jsonl = tmp_path / "results.jsonl"
+    csv = tmp_path / "summary.csv"
+    report = tmp_path / "report.md"
+    assert jsonl.exists()
+    assert csv.exists()
+    assert report.exists()
+
+    first = json.loads(jsonl.read_text(encoding="utf-8").splitlines()[0])
+    assert first["tokens_returned"] == 40
+    csv_text = csv.read_text(encoding="utf-8")
+    assert "tokens_returned" in csv_text
+    assert "latency_ms" in csv_text
+    assert "recall_at_k" in csv_text
+    assert "mrr_at_k" in csv_text
+    assert "answer_grounding_hit" in csv_text
+    assert "failure_phase" in csv_text
+    report_text = report.read_text(encoding="utf-8")
+    assert "Recall@k" in report_text
+    assert "MRR@k" in report_text
+    assert "answer_grounding_hit" in report_text

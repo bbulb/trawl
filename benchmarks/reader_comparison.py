@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -9,6 +11,21 @@ from typing import Any
 import yaml
 
 REQUIRED_CASE_FIELDS = {"id", "category", "url", "query", "expected_facts", "failure_class"}
+RESULT_FIELDS = [
+    "case_id",
+    "category",
+    "provider",
+    "status",
+    "latency_ms",
+    "tokens_returned",
+    "n_chunks_total",
+    "recall_at_k",
+    "mrr_at_k",
+    "answer_grounding_hit",
+    "failure_phase",
+    "missing_facts",
+    "error",
+]
 
 
 def load_cases(path: Path) -> list[dict[str, Any]]:
@@ -140,3 +157,70 @@ def build_skip_result(case: dict[str, Any], provider: str, reason: str) -> dict[
         "missing_facts": [fact["id"] for fact in case.get("expected_facts", [])],
         "error": reason,
     }
+
+
+def write_outputs(output_dir: Path, results: list[dict[str, Any]]) -> None:
+    """Write raw JSONL, compact CSV, and a Markdown benchmark report."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = output_dir / "results.jsonl"
+    csv_path = output_dir / "summary.csv"
+    report_path = output_dir / "report.md"
+
+    with jsonl_path.open("w", encoding="utf-8") as f:
+        for result in results:
+            f.write(json.dumps(result, ensure_ascii=False, sort_keys=True) + "\n")
+
+    with csv_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=RESULT_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        for result in results:
+            row = dict(result)
+            row["missing_facts"] = ",".join(result.get("missing_facts") or [])
+            writer.writerow(row)
+
+    report_path.write_text(render_report(results), encoding="utf-8")
+
+
+def render_report(results: list[dict[str, Any]]) -> str:
+    """Render a compact Markdown summary for reader-comparison results."""
+    active = [result for result in results if result["status"] != "skipped"]
+    by_provider = sorted({result["provider"] for result in results})
+    lines = [
+        "# Reader comparison benchmark",
+        "",
+        f"Rows: {len(results)}",
+        "",
+        "## Provider summary",
+        "",
+        "| Provider | Rows | Pass rate | Avg latency ms | Avg tokens |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for provider in by_provider:
+        provider_rows = [result for result in results if result["provider"] == provider]
+        quality_rows = [result for result in provider_rows if result["status"] != "skipped"]
+        ok_rows = [result for result in quality_rows if result["status"] == "ok"]
+        pass_rate = (len(ok_rows) / len(quality_rows)) if quality_rows else 0.0
+        avg_latency = _average([result["latency_ms"] for result in quality_rows])
+        avg_tokens = _average([result["tokens_returned"] for result in quality_rows])
+        lines.append(
+            f"| {provider} | {len(provider_rows)} | {pass_rate:.2f} | "
+            f"{avg_latency:.1f} | {avg_tokens:.1f} |"
+        )
+
+    if active:
+        lines.extend(
+            [
+                "",
+                "## Metrics",
+                "",
+                "- Recall@k: fact-group recall across returned ranked text.",
+                "- MRR@k: reciprocal rank for the first satisfied fact group.",
+                "- answer_grounding_hit: true when every expected fact group is present.",
+                "- failure_phase: fetch, extraction, retrieval, rerank, not_configured, or provider_error.",
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _average(values: list[int | float]) -> float:
+    return sum(values) / len(values) if values else 0.0
