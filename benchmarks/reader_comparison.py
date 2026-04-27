@@ -2,13 +2,27 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
+from datetime import UTC, datetime
 import json
+import os
 import re
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
+import httpx
 import yaml
+
+BENCH_DIR = Path(__file__).resolve().parent
+DEFAULT_CASES_FILE = BENCH_DIR / "reader_comparison_cases.yaml"
+DEFAULT_RESULTS_ROOT = BENCH_DIR / "results" / "reader-comparison"
+JINA_BASE = "https://r.jina.ai"
+JINA_TIMEOUT = 60.0
+DEFAULT_PROVIDERS = ["trawl", "jina", "trafilatura"]
+PROVIDER_CHOICES = ["trawl", "jina", "trafilatura", "firecrawl", "crawl4ai"]
 
 REQUIRED_CASE_FIELDS = {"id", "category", "url", "query", "expected_facts", "failure_class"}
 RESULT_FIELDS = [
@@ -37,6 +51,18 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
     for case in cases:
         validate_case(case)
     return cases
+
+
+def select_cases(
+    cases: list[dict[str, Any]], *, only: str | None, limit: int | None
+) -> list[dict[str, Any]]:
+    """Filter benchmark cases by id and optional limit."""
+    selected = [case for case in cases if only is None or case["id"] == only]
+    if only is not None and not selected:
+        raise ValueError(f"unknown case id: {only}")
+    if limit is not None:
+        selected = selected[:limit]
+    return selected
 
 
 def validate_case(case: dict[str, Any]) -> None:
@@ -159,6 +185,150 @@ def build_skip_result(case: dict[str, Any], provider: str, reason: str) -> dict[
     }
 
 
+def run_trawl_provider(case: dict[str, Any]) -> dict[str, Any]:
+    """Run trawl selective retrieval for a case."""
+    from trawl import fetch_relevant, to_dict
+
+    started = time.monotonic()
+    try:
+        result = fetch_relevant(case["url"], case["query"], use_rerank=True)
+        elapsed = int((time.monotonic() - started) * 1000)
+        payload = to_dict(result)
+        chunks = payload.get("chunks") or []
+        ranked_texts = [
+            "\n".join(part for part in (chunk.get("heading"), chunk.get("text")) if part)
+            for chunk in chunks
+        ]
+        return build_scored_result(
+            case=case,
+            provider="trawl",
+            status="ok",
+            latency_ms=elapsed,
+            ranked_texts=ranked_texts,
+            n_chunks_total=payload.get("n_chunks_total"),
+            error=payload.get("error"),
+        )
+    except Exception as exc:  # pragma: no cover - network/runtime provider behavior
+        elapsed = int((time.monotonic() - started) * 1000)
+        return build_scored_result(
+            case=case,
+            provider="trawl",
+            status="error",
+            latency_ms=elapsed,
+            ranked_texts=[],
+            n_chunks_total=None,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
+
+def run_jina_provider(case: dict[str, Any]) -> dict[str, Any]:
+    """Run Jina Reader for a case."""
+    started = time.monotonic()
+    try:
+        headers = {"Accept": "text/markdown"}
+        api_key = os.environ.get("JINA_API_KEY")
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        with httpx.Client(timeout=JINA_TIMEOUT, follow_redirects=True) as client:
+            response = client.get(f"{JINA_BASE}/{case['url']}", headers=headers)
+            response.raise_for_status()
+        elapsed = int((time.monotonic() - started) * 1000)
+        return build_scored_result(
+            case=case,
+            provider="jina",
+            status="ok",
+            latency_ms=elapsed,
+            ranked_texts=[response.text],
+            n_chunks_total=None,
+            error=None,
+        )
+    except Exception as exc:  # pragma: no cover - network provider behavior
+        elapsed = int((time.monotonic() - started) * 1000)
+        return build_scored_result(
+            case=case,
+            provider="jina",
+            status="error",
+            latency_ms=elapsed,
+            ranked_texts=[],
+            n_chunks_total=None,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
+
+def run_trafilatura_provider(case: dict[str, Any]) -> dict[str, Any]:
+    """Run local Trafilatura extraction as a full-page baseline."""
+    try:
+        import trafilatura
+    except ImportError:
+        return build_skip_result(case, "trafilatura", "trafilatura is not installed")
+
+    started = time.monotonic()
+    try:
+        downloaded = trafilatura.fetch_url(case["url"])
+        text = ""
+        if downloaded:
+            text = (
+                trafilatura.extract(
+                    downloaded,
+                    output_format="markdown",
+                    include_tables=True,
+                    include_links=True,
+                    include_images=False,
+                    include_comments=False,
+                )
+                or ""
+            )
+        elapsed = int((time.monotonic() - started) * 1000)
+        return build_scored_result(
+            case=case,
+            provider="trafilatura",
+            status="ok",
+            latency_ms=elapsed,
+            ranked_texts=[text] if text else [],
+            n_chunks_total=None,
+            error=None,
+        )
+    except Exception as exc:  # pragma: no cover - network provider behavior
+        elapsed = int((time.monotonic() - started) * 1000)
+        return build_scored_result(
+            case=case,
+            provider="trafilatura",
+            status="error",
+            latency_ms=elapsed,
+            ranked_texts=[],
+            n_chunks_total=None,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
+
+def run_firecrawl_provider(case: dict[str, Any]) -> dict[str, Any]:
+    """Record Firecrawl availability until an adapter is configured."""
+    if not os.environ.get("FIRECRAWL_API_KEY"):
+        return build_skip_result(case, "firecrawl", "FIRECRAWL_API_KEY not set")
+    return build_skip_result(case, "firecrawl", "Firecrawl adapter is not implemented")
+
+
+def run_crawl4ai_provider(case: dict[str, Any]) -> dict[str, Any]:
+    """Record Crawl4AI availability until an adapter is configured."""
+    try:
+        __import__("crawl4ai")
+    except ImportError:
+        return build_skip_result(case, "crawl4ai", "crawl4ai is not installed")
+    return build_skip_result(case, "crawl4ai", "Crawl4AI adapter is not implemented")
+
+
+def run_provider(case: dict[str, Any], provider: str) -> dict[str, Any]:
+    """Run one configured provider for one benchmark case."""
+    runners = {
+        "trawl": run_trawl_provider,
+        "jina": run_jina_provider,
+        "trafilatura": run_trafilatura_provider,
+        "firecrawl": run_firecrawl_provider,
+        "crawl4ai": run_crawl4ai_provider,
+    }
+    return runners[provider](case)
+
+
 def write_outputs(output_dir: Path, results: list[dict[str, Any]]) -> None:
     """Write raw JSONL, compact CSV, and a Markdown benchmark report."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -224,3 +394,46 @@ def render_report(results: list[dict[str, Any]]) -> str:
 
 def _average(values: list[int | float]) -> float:
     return sum(values) / len(values) if values else 0.0
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cases", type=Path, default=DEFAULT_CASES_FILE)
+    parser.add_argument("--only", help="Run one case id")
+    parser.add_argument("--limit", type=int, help="Limit selected cases")
+    parser.add_argument(
+        "--provider",
+        action="append",
+        choices=PROVIDER_CHOICES,
+        help="Provider to run. May be repeated. Defaults to trawl, jina, trafilatura.",
+    )
+    parser.add_argument("--output-dir", type=Path)
+    return parser.parse_args(argv)
+
+
+def timestamped_output_dir() -> Path:
+    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+    return DEFAULT_RESULTS_ROOT / stamp
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    cases = select_cases(load_cases(args.cases), only=args.only, limit=args.limit)
+    providers = args.provider or DEFAULT_PROVIDERS
+    output_dir = args.output_dir or timestamped_output_dir()
+
+    results: list[dict[str, Any]] = []
+    for case in cases:
+        for provider in providers:
+            print(f"[{provider}] {case['id']}", file=sys.stderr, flush=True)
+            results.append(run_provider(case, provider))
+
+    write_outputs(output_dir, results)
+    print(f"Wrote reader comparison results to {output_dir}", file=sys.stderr)
+
+    active = [result for result in results if result["status"] != "skipped"]
+    return 0 if active else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

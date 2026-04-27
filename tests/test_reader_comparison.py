@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import json
+from pathlib import Path
 
 import pytest
 
@@ -212,3 +212,18 @@ def test_write_outputs_creates_jsonl_csv_and_markdown(tmp_path: Path):
     assert "Recall@k" in report_text
     assert "MRR@k" in report_text
     assert "answer_grounding_hit" in report_text
+
+
+def test_select_cases_filters_only_and_limit():
+    cases = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+
+    assert rc.select_cases(cases, only="b", limit=None) == [{"id": "b"}]
+    assert rc.select_cases(cases, only=None, limit=2) == [{"id": "a"}, {"id": "b"}]
+
+
+def test_default_case_manifest_loads_and_classifies_failures():
+    cases = rc.load_cases(rc.DEFAULT_CASES_FILE)
+
+    assert len(cases) >= 5
+    assert all(case["expected_facts"] for case in cases)
+    assert all(case["failure_class"] for case in cases)
