@@ -36,6 +36,11 @@ class Chunk:
     # and reranking treat the chunk like any other.
     record_group_id: int | None = None
     record_index: int | None = None
+    extractor: str | None = None
+    source_url: str | None = None
+    source_selector: str | None = None
+    source_xpath: str | None = None
+    char_span: tuple[int, int] | None = None
 
     @property
     def heading(self) -> str:
@@ -64,7 +69,15 @@ def plain_text(md: str) -> str:
     return md.strip()
 
 
-def chunk_markdown(md: str, *, max_chars: int | None = None) -> list[Chunk]:
+def chunk_markdown(
+    md: str,
+    *,
+    max_chars: int | None = None,
+    extractor: str | None = None,
+    source_url: str | None = None,
+    source_selector: str | None = None,
+    source_xpath: str | None = None,
+) -> list[Chunk]:
     """Split markdown into heading-bound, table-preserving chunks.
 
     When `max_chars` is None, the default is chosen adaptively based on page
@@ -88,6 +101,7 @@ def chunk_markdown(md: str, *, max_chars: int | None = None) -> list[Chunk]:
     sections = _split_by_headings(md)
     chunks: list[Chunk] = []
     idx = 0
+    search_from = 0
     for heading_path, body in sections:
         for piece, meta in _split_body(body, max_chars=max_chars):
             text = piece.strip()
@@ -96,6 +110,14 @@ def chunk_markdown(md: str, *, max_chars: int | None = None) -> list[Chunk]:
             embed = plain_text(text)
             if len(embed) < MIN_PLAIN_CHARS:
                 continue
+            start = md.find(text, search_from)
+            if start < 0:
+                start = md.find(text)
+            char_span = None
+            if start >= 0:
+                end = start + len(text)
+                char_span = (start, end)
+                search_from = end
             chunks.append(
                 Chunk(
                     text=text,
@@ -105,6 +127,11 @@ def chunk_markdown(md: str, *, max_chars: int | None = None) -> list[Chunk]:
                     embed_text=embed,
                     record_group_id=meta[0] if meta else None,
                     record_index=meta[1] if meta else None,
+                    extractor=extractor,
+                    source_url=source_url,
+                    source_selector=source_selector,
+                    source_xpath=source_xpath,
+                    char_span=char_span,
                 ),
             )
             idx += 1

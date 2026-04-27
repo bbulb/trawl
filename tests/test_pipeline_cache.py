@@ -37,7 +37,7 @@ def fake_fetcher(monkeypatch):
     """Replace `_fetch_html` with a counter so we can assert hits vs misses."""
     calls: list[str] = []
 
-    def _fake(url: str):
+    def _fake(url: str, query: str | None = None):
         calls.append(url)
         fetched = FetchResult(
             url=url,
@@ -48,7 +48,13 @@ def fake_fetcher(monkeypatch):
             fetcher="playwright+trafilatura",
             elapsed_ms=4321,
         )
-        return fetched, fetched.markdown, "playwright+trafilatura"
+        extracted = pipeline.extraction.ExtractedContent(
+            markdown=fetched.markdown,
+            extractor="trafilatura-recall",
+            source_selector="document",
+            source_xpath="/",
+        )
+        return fetched, extracted, "playwright+trafilatura"
 
     monkeypatch.setattr(pipeline, "_fetch_html", _fake)
     return calls
@@ -70,7 +76,7 @@ def fake_retrieval(monkeypatch):
 
     # Skip the reranker round-trip for determinism.
     def _fake_rerank(query, scored, *, k, page_title=""):
-        return scored[:k]
+        return scored[:k], False
 
     monkeypatch.setattr(pipeline.reranking, "rerank", _fake_rerank)
 
@@ -154,7 +160,7 @@ def test_different_queries_share_cached_fetch(fake_fetcher, fake_retrieval, no_p
 def test_error_result_not_cached(fake_retrieval, no_profile, monkeypatch):
     """A failed fetch must not populate the cache."""
 
-    def _fail(url):
+    def _fail(url, query: str | None = None):
         return (
             FetchResult(
                 url=url,
@@ -165,7 +171,7 @@ def test_error_result_not_cached(fake_retrieval, no_profile, monkeypatch):
                 elapsed_ms=100,
                 error="boom",
             ),
-            "",
+            pipeline.extraction.ExtractedContent(markdown="", extractor=""),
             "playwright+trafilatura",
         )
 

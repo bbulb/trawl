@@ -271,7 +271,7 @@ def test_pipeline_post_detection_passthrough(http_server, monkeypatch):
     from trawl import pipeline as pipeline_mod
     from trawl.fetchers.playwright import FetchResult as PwFetchResult
 
-    def fake_fetch_html(url: str):
+    def fake_fetch_html(url: str, query: str | None = None):
         fr = PwFetchResult(
             url=url,
             html="<html><pre>{&quot;post&quot;: &quot;detect&quot;}</pre></html>",
@@ -281,7 +281,11 @@ def test_pipeline_post_detection_passthrough(http_server, monkeypatch):
             elapsed_ms=5,
             content_type="application/json; charset=utf-8",
         )
-        return fr, "garbage-markdown", "playwright+trafilatura"
+        extracted = pipeline_mod.extraction.ExtractedContent(
+            markdown="garbage-markdown",
+            extractor="trafilatura-recall",
+        )
+        return fr, extracted, "playwright+trafilatura"
 
     monkeypatch.setattr(pipeline_mod, "_fetch_html", fake_fetch_html)
 
@@ -302,7 +306,7 @@ def test_pipeline_post_detection_passthrough_fetch_fails(monkeypatch):
     from trawl.fetchers import passthrough as pt_mod
     from trawl.fetchers.playwright import FetchResult as PwFetchResult
 
-    def fake_fetch_html(url: str):
+    def fake_fetch_html(url: str, query: str | None = None):
         return (
             PwFetchResult(
                 url=url,
@@ -313,7 +317,7 @@ def test_pipeline_post_detection_passthrough_fetch_fails(monkeypatch):
                 elapsed_ms=5,
                 content_type="application/json",
             ),
-            "",
+            pipeline_mod.extraction.ExtractedContent(markdown="", extractor=""),
             "playwright+trafilatura",
         )
 

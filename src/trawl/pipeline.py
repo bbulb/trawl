@@ -18,6 +18,7 @@ import logging
 import os
 import time
 from dataclasses import asdict, dataclass, field
+from inspect import Parameter, signature
 from urllib.parse import urlsplit
 
 from . import chunking, enrichment, extraction, fetch_cache, hyde, reranking, retrieval, telemetry
@@ -147,6 +148,11 @@ def _is_pdf_url(url: str) -> bool:
     return lower.endswith(".pdf") or "/pdf/" in lower
 
 
+def _is_youtube_url(url: str) -> bool:
+    """Backward-compatible URL predicate retained for older callers/tests."""
+    return youtube.matches(url)
+
+
 # (fetcher_module, native_fetcher_name) — each module exposes `matches(url) -> bool`
 # and `fetch(url) -> FetchResult`. Checked in order; first match wins.
 _API_FETCHERS = [
@@ -158,13 +164,24 @@ _API_FETCHERS = [
 
 
 def _chunk_to_dict(chunk, *, score: float | None) -> dict:
-    return {
+    payload = {
         "text": chunk.text,
         "heading": chunk.heading,
         "char_count": chunk.char_count,
         "chunk_index": chunk.chunk_index,
         "score": score,
     }
+    if getattr(chunk, "extractor", None):
+        payload["extractor"] = chunk.extractor
+    if getattr(chunk, "source_url", None):
+        payload["source_url"] = chunk.source_url
+    if getattr(chunk, "source_selector", None):
+        payload["source_selector"] = chunk.source_selector
+    if getattr(chunk, "source_xpath", None):
+        payload["source_xpath"] = chunk.source_xpath
+    if getattr(chunk, "char_span", None) is not None:
+        payload["char_span"] = list(chunk.char_span)
+    return payload
 
 
 def _decode_passthrough_body(body: bytes, content_type: str | None) -> str:
@@ -343,8 +360,15 @@ def _build_profile_result(
     Shared by the exact-match fast path and the host-transfer path.
     """
     t_chunk = time.monotonic()
-    md = extraction.html_to_markdown(subtree_html)
-    chunks = chunking.chunk_markdown(md)
+    extracted = extraction.extract_html(subtree_html, query=query)
+    md = extracted.markdown
+    chunks = chunking.chunk_markdown(
+        md,
+        extractor=extracted.extractor,
+        source_url=url,
+        source_selector=profile.mapper.main_selector or extracted.source_selector,
+        source_xpath=extracted.source_xpath,
+    )
     chunk_ms = int((time.monotonic() - t_chunk) * 1000)
 
     # Profile path operates on a subtree; the full-page <title> isn't
@@ -755,10 +779,10 @@ def _fetch_relevant_impl(
     return result
 
 
-def _fetch_html(url: str) -> tuple[object, str, str]:
+def _fetch_html(url: str, query: str | None = None) -> tuple[object, extraction.ExtractedContent, str]:
     """Run the API-fetcher chain, falling back to Playwright + Trafilatura.
 
-    Returns (fetched, markdown, fetcher_name). `fetched` is whatever
+    Returns (fetched, extracted, fetcher_name). `fetched` is whatever
     the chosen fetcher produced; callers use its `.ok`, `.error`,
     `.elapsed_ms`, and (for Playwright) `.content_type`.
     """
@@ -766,13 +790,60 @@ def _fetch_html(url: str) -> tuple[object, str, str]:
         if fetcher_mod.matches(url):
             fetched = fetcher_mod.fetch(url)
             if fetched.fetcher == native_name:
-                return fetched, fetched.markdown, native_name
+                return (
+                    fetched,
+                    extraction.ExtractedContent(
+                        markdown=fetched.markdown,
+                        extractor=native_name,
+                        source_selector=None,
+                        source_xpath=None,
+                    ),
+                    native_name,
+                )
             # API fetcher fell back to playwright — re-extract.
-            markdown = extraction.html_to_markdown(fetched.html) if fetched.ok else ""
-            return fetched, markdown, "playwright+trafilatura"
+            extracted = extraction.extract_html(fetched.html, query=query) if fetched.ok else None
+            return (
+                fetched,
+                extracted or extraction.ExtractedContent(markdown="", extractor=""),
+                "playwright+trafilatura",
+            )
     fetched = playwright.fetch(url)
-    markdown = extraction.html_to_markdown(fetched.html) if fetched.ok else ""
-    return fetched, markdown, "playwright+trafilatura"
+    extracted = extraction.extract_html(fetched.html, query=query) if fetched.ok else None
+    return (
+        fetched,
+        extracted or extraction.ExtractedContent(markdown="", extractor=""),
+        "playwright+trafilatura",
+    )
+
+
+def _call_fetch_html(url: str, query: str) -> tuple[object, extraction.ExtractedContent, str]:
+    """Call _fetch_html while tolerating older one-arg test doubles.
+
+    `_fetch_html` is private, but several unit tests monkeypatch it directly.
+    Supporting the legacy `(fetched, markdown, fetcher_name)` shape keeps those
+    tests focused on their branch behavior while production uses the richer
+    ExtractedContent payload.
+    """
+    try:
+        params = signature(_fetch_html).parameters.values()
+        accepts_query = any(
+            p.kind == Parameter.VAR_KEYWORD or p.name == "query" for p in params
+        )
+    except (TypeError, ValueError):
+        accepts_query = True
+
+    raw = _fetch_html(url, query=query) if accepts_query else _fetch_html(url)
+    fetched, extracted_or_markdown, fetcher_name = raw
+    if isinstance(extracted_or_markdown, extraction.ExtractedContent):
+        return fetched, extracted_or_markdown, fetcher_name
+    return (
+        fetched,
+        extraction.ExtractedContent(
+            markdown=str(extracted_or_markdown),
+            extractor=fetcher_name,
+        ),
+        fetcher_name,
+    )
 
 
 def _run_full_pipeline(
@@ -801,10 +872,17 @@ def _run_full_pipeline(
         page_title = cached.page_title
         fetcher_name = cached.fetcher_used
         content_type = cached.content_type
+        extracted = extraction.ExtractedContent(
+            markdown=markdown,
+            extractor=cached.extractor or "",
+            source_selector=cached.source_selector,
+            source_xpath=cached.source_xpath,
+        )
     else:
         if _is_pdf_url(url):
             fetched = pdf.fetch(url)
             markdown = fetched.markdown
+            extracted = extraction.ExtractedContent(markdown=markdown, extractor="pdf")
             fetcher_name = "pdf"
         else:
             pt_result = _try_passthrough(url, query, t_start)
@@ -818,9 +896,11 @@ def _run_full_pipeline(
             if pdf.probe(url):
                 fetched = pdf.fetch(url)
                 markdown = fetched.markdown
+                extracted = extraction.ExtractedContent(markdown=markdown, extractor="pdf")
                 fetcher_name = "pdf-probed"
             else:
-                fetched, markdown, fetcher_name = _fetch_html(url)
+                fetched, extracted, fetcher_name = _call_fetch_html(url, query)
+                markdown = extracted.markdown
 
         # 1b. Playwright-path post-detection passthrough. When a suffix-less
         # URL returns JSON/XML, Chromium wraps it in a viewer DOM — so we
@@ -877,12 +957,21 @@ def _run_full_pipeline(
                 content_type=content_type,
                 cached_at=time.time(),
                 fetch_elapsed_ms=fetch_elapsed_ms,
+                extractor=extracted.extractor or None,
+                source_selector=extracted.source_selector,
+                source_xpath=extracted.source_xpath,
             )
         )
 
     # 2. Chunk
     t_chunk = time.monotonic()
-    chunks = chunking.chunk_markdown(markdown)
+    chunks = chunking.chunk_markdown(
+        markdown,
+        extractor=extracted.extractor or None,
+        source_url=url,
+        source_selector=extracted.source_selector,
+        source_xpath=extracted.source_xpath,
+    )
     chunk_ms = int((time.monotonic() - t_chunk) * 1000)
 
     # 3. Optional HyDE

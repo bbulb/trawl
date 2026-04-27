@@ -69,6 +69,9 @@ class CachedFetch:
     content_type: str | None
     cached_at: float
     fetch_elapsed_ms: int
+    extractor: str | None = None
+    source_selector: str | None = None
+    source_xpath: str | None = None
 
 
 # ---------- Env helpers
@@ -153,6 +156,9 @@ def get(url: str, *, now: float | None = None) -> CachedFetch | None:
             content_type=raw.get("content_type"),
             cached_at=cached_at,
             fetch_elapsed_ms=int(raw.get("fetch_elapsed_ms", 0)),
+            extractor=raw.get("extractor"),
+            source_selector=raw.get("source_selector"),
+            source_xpath=raw.get("source_xpath"),
         )
     except (KeyError, TypeError, ValueError) as e:
         logger.debug("fetch_cache: record missing fields at %s: %s", path, e)
