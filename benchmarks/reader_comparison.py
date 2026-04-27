@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import argparse
 import csv
-from datetime import UTC, datetime
 import json
 import os
 import re
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
