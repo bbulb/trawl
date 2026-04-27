@@ -1,9 +1,8 @@
 """PDF fetcher.
 
-Uses httpx for the download and PyMuPDF (`pymupdf`) for text extraction.
-PyMuPDF has the best trade-off of speed, quality, and API simplicity
-among Python PDF libraries — a single `page.get_text()` per page gives
-us reasonable reading order for most academic and technical PDFs.
+Uses httpx for the download and the backend helpers in `pdf_backends`
+for text extraction. PyMuPDF remains the default because it has the best
+trade-off of speed, quality, and API simplicity among Python PDF libraries.
 
 Also exposes `probe(url)` — a HEAD-only check used by the pipeline to
 catch suffix-less PDF URLs (download links, redirects) before paying
@@ -17,6 +16,7 @@ import time
 
 import httpx
 
+from . import pdf_backends
 from .playwright import FetchResult, make_error_result
 
 HTTP_TIMEOUT_S = 120.0
@@ -49,7 +49,7 @@ def probe(url: str, *, timeout_s: float = PROBE_TIMEOUT_S) -> bool:
     return ct == PDF_CONTENT_TYPE
 
 
-def fetch(url: str) -> FetchResult:
+def fetch(url: str, *, backend: str = pdf_backends.DEFAULT_BACKEND) -> FetchResult:
     t0 = time.monotonic()
     try:
         with httpx.Client(follow_redirects=True, timeout=HTTP_TIMEOUT_S) as client:
@@ -59,30 +59,14 @@ def fetch(url: str) -> FetchResult:
     except httpx.HTTPError as e:
         return make_error_result(url, "pdf", t0, f"{type(e).__name__}: {e}")
 
-    try:
-        import pymupdf  # noqa: PLC0415  -- lazy import
-    except ImportError:
-        return make_error_result(url, "pdf", t0, "pymupdf not installed (pip install pymupdf)")
+    extraction = pdf_backends.extract_pdf_bytes(content, backend=backend)
+    if extraction.error:
+        return make_error_result(url, "pdf", t0, f"PDF parse error: {extraction.error}")
 
-    try:
-        doc = pymupdf.open(stream=content, filetype="pdf")
-        pages: list[str] = []
-        for page in doc:
-            # 'text' reading order is good enough for chunking; 'blocks' or
-            # 'dict' give structure but add complexity we don't need here.
-            pages.append(page.get_text("text"))
-        doc.close()
-    except Exception as e:
-        return make_error_result(url, "pdf", t0, f"PDF parse error: {type(e).__name__}: {e}")
-
-    # Join pages with a blank line. The chunker's sentence fallback splitter
-    # will still break each paragraph sensibly even when pages have no
-    # explicit newlines inside them.
-    markdown = "\n\n".join(p.strip() for p in pages if p.strip())
     return FetchResult(
         url=url,
         html="",
-        markdown=markdown,
+        markdown=extraction.markdown,
         raw_html="",
         fetcher="pdf",
         elapsed_ms=int((time.monotonic() - t0) * 1000),

@@ -41,3 +41,37 @@ Optional provider notes:
 
 WCXB remains the extraction-F1 benchmark in `benchmarks/wcxb/`; reader comparison
 is for URL/query/fact retrieval parity.
+
+## PDF backend comparison
+
+`pdf_backend_comparison.py` compares PDF extraction backends on the same PDF
+bytes and records text fact recall plus structured table hits when a backend
+can expose table rows separately from flattened Markdown.
+
+Run the default case set with the default backend list:
+
+```bash
+python benchmarks/pdf_backend_comparison.py
+```
+
+Run only the production baseline:
+
+```bash
+python benchmarks/pdf_backend_comparison.py --backend pymupdf --limit 1
+```
+
+Install optional heavy backends when you want to compare them locally:
+
+```bash
+pip install -e '.[pdf-backends]'
+```
+
+Results are written under `benchmarks/results/pdf-backends/<timestamp>/`:
+
+- `results.jsonl` — one backend/case result per line
+- `summary.csv` — compact tabular metrics
+- `report.md` — backend-level summary
+
+PyMuPDF is the production default. MarkItDown, Unstructured, and Docling are
+lazy-imported optional backends; MinerU is listed as an explicit skipped spike
+target until a lightweight local adapter is chosen.

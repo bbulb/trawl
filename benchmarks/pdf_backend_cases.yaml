@@ -1,0 +1,21 @@
+# PDF backend comparison cases.
+#
+# Prefer stable remote PDFs or local fixture paths. Every case carries expected
+# facts and a failure class so extraction regressions are labeled consistently.
+
+cases:
+  - id: arxiv_lora
+    category: paper
+    source: "https://arxiv.org/pdf/2106.09685"
+    query: "what low-rank adaptation method is proposed"
+    expected_facts:
+      - id: lora_name
+        any_of: ["LoRA", "Low-Rank Adaptation"]
+      - id: trainable_parameters
+        any_of: ["trainable parameters", "low-rank", "rank"]
+    expected_tables: []
+    failure_class:
+      on_fetch_error: fetch
+      on_empty_output: extraction
+      on_missing_facts: extraction
+
