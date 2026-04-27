@@ -26,7 +26,7 @@ def test_html_to_markdown_scores_candidates_instead_of_picking_longest(monkeypat
 
 def test_chunk_metadata_carries_extractor_provenance_and_char_span():
     chunks = chunking.chunk_markdown(
-        "Install with `pip install trawl`.\n\nThen run trawl-mcp.",
+        "# Install\n\nInstall with `pip install trawl`.\n\nThen run trawl-mcp.",
         extractor="trafilatura-recall",
         source_url="https://example.com/docs",
         source_selector="main",
@@ -39,11 +39,14 @@ def test_chunk_metadata_carries_extractor_provenance_and_char_span():
     assert chunk.source_url == "https://example.com/docs"
     assert chunk.source_selector == "main"
     assert chunk.source_xpath == "/html/body/main"
-    assert chunk.char_span == (0, len(chunk.text))
+    assert chunk.heading_path == ["Install"]
+    assert chunk.char_span == (11, 11 + len(chunk.text))
 
-    as_dict = pipeline._chunk_to_dict(chunk, score=0.42)
+    as_dict = pipeline._chunk_to_dict(chunk, score=0.42, title="Docs")
     assert as_dict["extractor"] == "trafilatura-recall"
     assert as_dict["source_url"] == "https://example.com/docs"
     assert as_dict["source_selector"] == "main"
     assert as_dict["source_xpath"] == "/html/body/main"
-    assert as_dict["char_span"] == [0, len(chunk.text)]
+    assert as_dict["heading_path"] == ["Install"]
+    assert as_dict["title"] == "Docs"
+    assert as_dict["char_span"] == [11, 11 + len(chunk.text)]

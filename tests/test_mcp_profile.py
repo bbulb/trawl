@@ -96,7 +96,7 @@ def _install_fakes() -> None:
     import trawl as trawl_mod
     import trawl.profiles as profiles_mod
 
-    def _fake_fetch_relevant(url, query=None, *, k=None, use_hyde=False):
+    def _fake_fetch_relevant(url, query=None, *, k=None, use_hyde=False, use_rerank=True):
         # Return a minimal object with the attributes the existing
         # to_dict expects. Use a SimpleNamespace-like shim.
         from types import SimpleNamespace

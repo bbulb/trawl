@@ -220,6 +220,9 @@ def test_fetch_relevant_passthrough_json(http_server):
     assert len(r.chunks) == 1
     assert r.chunks[0]["text"] == body.decode("utf-8")
     assert r.chunks[0]["chunk_index"] == 0
+    assert r.chunks[0]["source_url"] == f"{base}/data.json"
+    assert r.chunks[0]["heading_path"] == []
+    assert r.chunks[0]["title"] == ""
     assert r.n_chunks_total == 1
 
 

@@ -166,10 +166,12 @@ _API_FETCHERS = [
 ]
 
 
-def _chunk_to_dict(chunk, *, score: float | None) -> dict:
+def _chunk_to_dict(chunk, *, score: float | None, title: str = "") -> dict:
     payload = {
         "text": chunk.text,
         "heading": chunk.heading,
+        "heading_path": list(getattr(chunk, "heading_path", []) or []),
+        "title": title,
         "char_count": chunk.char_count,
         "chunk_index": chunk.chunk_index,
         "score": score,
@@ -238,9 +240,14 @@ def _build_passthrough_result(
     chunk = {
         "text": text,
         "heading": None,
+        "heading_path": [],
+        "title": "",
         "char_count": len(text),
         "chunk_index": 0,
         "score": None,
+        "source_url": url,
+        "extractor": fetcher_name,
+        "char_span": [0, len(text)],
     }
     return PipelineResult(
         url=url,
@@ -416,7 +423,7 @@ def _build_profile_result(
     n_chunks_embedded = 0
     if len(chunks) <= PROFILE_DIRECT_CHUNK_THRESHOLD:
         path = "profile_direct"
-        retrieved_dicts = [_chunk_to_dict(c, score=None) for c in chunks]
+        retrieved_dicts = [_chunk_to_dict(c, score=None, title=page_title) for c in chunks]
         retrieval_ms = 0
     elif query:
         path = "profile_retrieval"
@@ -449,11 +456,13 @@ def _build_profile_result(
             rerank_ms = int((time.monotonic() - t_rr) * 1000)
         else:
             final_scored = retrieved.scored
-        retrieved_dicts = [_chunk_to_dict(s.chunk, score=s.score) for s in final_scored]
+        retrieved_dicts = [
+            _chunk_to_dict(s.chunk, score=s.score, title=page_title) for s in final_scored
+        ]
         emitted_chunks = [s.chunk for s in final_scored]
     else:
         path = "profile_direct_large"
-        retrieved_dicts = [_chunk_to_dict(c, score=None) for c in chunks]
+        retrieved_dicts = [_chunk_to_dict(c, score=None, title=page_title) for c in chunks]
         retrieval_ms = 0
         emitted_chunks = list(chunks)
 
@@ -1062,7 +1071,7 @@ def _run_full_pipeline(
         hyde_used=use_hyde,
         hyde_text=hyde_text,
         chunks=[
-            _chunk_to_dict(c, score=s.score)
+            _chunk_to_dict(c, score=s.score, title=page_title)
             for c, s in zip(emitted_chunks, final_scored, strict=True)
         ],
         excerpts=enrichment.extract_excerpts(emitted_chunks),
