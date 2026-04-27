@@ -78,3 +78,78 @@ cases:
     with pytest.raises(ValueError, match="failure_class"):
         rc.load_cases(path)
 
+
+def test_build_result_classifies_missing_facts_as_retrieval_failure():
+    case = {
+        "id": "mdn_fetch_post",
+        "category": "docs",
+        "url": "https://example.test",
+        "query": "fetch post",
+        "expected_facts": [{"id": "post", "any_of": ["POST"]}],
+        "failure_class": {
+            "on_empty_output": "extraction",
+            "on_missing_facts": "retrieval",
+        },
+    }
+
+    result = rc.build_scored_result(
+        case=case,
+        provider="example",
+        status="ok",
+        latency_ms=12,
+        ranked_texts=["GET example"],
+        n_chunks_total=None,
+        error=None,
+    )
+
+    assert result["status"] == "fail"
+    assert result["failure_phase"] == "retrieval"
+    assert result["tokens_returned"] > 0
+    assert result["missing_facts"] == ["post"]
+
+
+def test_build_result_classifies_empty_output_as_extraction_failure():
+    case = {
+        "id": "empty",
+        "category": "docs",
+        "url": "https://example.test",
+        "query": "example",
+        "expected_facts": [{"id": "example", "any_of": ["example"]}],
+        "failure_class": {
+            "on_empty_output": "extraction",
+            "on_missing_facts": "retrieval",
+        },
+    }
+
+    result = rc.build_scored_result(
+        case=case,
+        provider="example",
+        status="ok",
+        latency_ms=12,
+        ranked_texts=[],
+        n_chunks_total=None,
+        error=None,
+    )
+
+    assert result["status"] == "fail"
+    assert result["failure_phase"] == "extraction"
+    assert result["tokens_returned"] == 0
+
+
+def test_build_skip_result_marks_optional_provider_not_configured():
+    case = {
+        "id": "mdn_fetch_post",
+        "category": "docs",
+        "url": "https://example.test",
+        "query": "fetch post",
+        "expected_facts": [{"id": "post", "any_of": ["POST"]}],
+        "failure_class": {"on_missing_facts": "retrieval"},
+    }
+
+    result = rc.build_skip_result(case, "firecrawl", "FIRECRAWL_API_KEY not set")
+
+    assert result["case_id"] == "mdn_fetch_post"
+    assert result["provider"] == "firecrawl"
+    assert result["status"] == "skipped"
+    assert result["failure_phase"] == "not_configured"
+    assert result["error"] == "FIRECRAWL_API_KEY not set"
