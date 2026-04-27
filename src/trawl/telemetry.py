@@ -33,7 +33,7 @@ def _query_sha1(query: str) -> str:
 
 
 def _build_event(result: PipelineResult) -> dict:
-    return {
+    event = {
         "ts": _utc_now_iso(),
         "schema": SCHEMA_VERSION,
         "host": urlsplit(result.url).netloc,
@@ -60,6 +60,16 @@ def _build_event(result: PipelineResult) -> dict:
         "n_chunks_embedded": result.n_chunks_embedded,
         "error": result.error,
     }
+    diagnostics = result.retrieval_diagnostics or {}
+    if diagnostics:
+        event["retrieval_mode"] = diagnostics.get("mode")
+        event["retrieval_query_type"] = diagnostics.get("query_type")
+        event["retrieval_rankers"] = diagnostics.get("rankers", [])
+        event["retrieval_fusion_weights"] = diagnostics.get("weights", {})
+        event["retrieval_rank_diagnostics"] = diagnostics.get("chunks", [])
+        if diagnostics.get("sparse_error"):
+            event["retrieval_sparse_error"] = diagnostics["sparse_error"]
+    return event
 
 
 def _enabled() -> bool:

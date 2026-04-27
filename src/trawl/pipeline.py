@@ -114,6 +114,9 @@ class PipelineResult:
     # dropped documents or truncated any doc. Stays False when the cap
     # is disabled or when the payload was already under the limits.
     rerank_capped: bool = False
+    # R3 — retrieval fusion diagnostics. Contains chunk indices, raw ranks,
+    # and per-ranker fusion contributions only; never raw chunk text.
+    retrieval_diagnostics: dict = field(default_factory=dict)
 
     @property
     def output_chars(self) -> int:
@@ -182,6 +185,22 @@ def _chunk_to_dict(chunk, *, score: float | None) -> dict:
     if getattr(chunk, "char_span", None) is not None:
         payload["char_span"] = list(chunk.char_span)
     return payload
+
+
+def _retrieval_diagnostics(result: retrieval.RetrievalResult) -> dict:
+    if not result.fusion_weights and not result.rank_diagnostics:
+        return {}
+    rankers = list(result.fusion_weights or {})
+    diagnostics = {
+        "mode": result.retrieval_mode,
+        "query_type": result.query_type,
+        "weights": result.fusion_weights or {},
+        "rankers": rankers,
+        "chunks": result.rank_diagnostics or [],
+    }
+    if result.sparse_rank_error:
+        diagnostics["sparse_error"] = result.sparse_rank_error
+    return diagnostics
 
 
 def _decode_passthrough_body(body: bytes, content_type: str | None) -> str:
@@ -420,6 +439,7 @@ def _build_profile_result(
                 error=retrieved.error,
                 path=path,
                 n_chunks_embedded=retrieved.n_chunks_embedded,
+                retrieval_diagnostics=_retrieval_diagnostics(retrieved),
             )
         if use_rerank and retrieved.scored:
             t_rr = time.monotonic()
@@ -457,6 +477,9 @@ def _build_profile_result(
         ),
         chain_hints=enrichment.derive_chain_hints(url),
         n_chunks_embedded=n_chunks_embedded,
+        retrieval_diagnostics=_retrieval_diagnostics(retrieved)
+        if path == "profile_retrieval"
+        else {},
     )
 
 
@@ -779,7 +802,9 @@ def _fetch_relevant_impl(
     return result
 
 
-def _fetch_html(url: str, query: str | None = None) -> tuple[object, extraction.ExtractedContent, str]:
+def _fetch_html(
+    url: str, query: str | None = None
+) -> tuple[object, extraction.ExtractedContent, str]:
     """Run the API-fetcher chain, falling back to Playwright + Trafilatura.
 
     Returns (fetched, extracted, fetcher_name). `fetched` is whatever
@@ -826,9 +851,7 @@ def _call_fetch_html(url: str, query: str) -> tuple[object, extraction.Extracted
     """
     try:
         params = signature(_fetch_html).parameters.values()
-        accepts_query = any(
-            p.kind == Parameter.VAR_KEYWORD or p.name == "query" for p in params
-        )
+        accepts_query = any(p.kind == Parameter.VAR_KEYWORD or p.name == "query" for p in params)
     except (TypeError, ValueError):
         accepts_query = True
 
@@ -1010,6 +1033,7 @@ def _run_full_pipeline(
             hyde_used=use_hyde,
             hyde_text=hyde_text,
             n_chunks_embedded=retrieved.n_chunks_embedded,
+            retrieval_diagnostics=_retrieval_diagnostics(retrieved),
         )
 
     rerank_ms = 0
@@ -1055,6 +1079,7 @@ def _run_full_pipeline(
         content_type=content_type,
         cache_hit=cache_hit,
         n_chunks_embedded=retrieved.n_chunks_embedded,
+        retrieval_diagnostics=_retrieval_diagnostics(retrieved),
     )
 
 

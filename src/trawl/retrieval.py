@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
-from .bm25 import bm25_rank, rrf_fuse
+from .bm25 import bm25_rank
 from .chunking import Chunk
 
 DEFAULT_EMBEDDING_URL = os.environ.get("TRAWL_EMBED_URL", "http://localhost:8081/v1")
@@ -41,6 +43,17 @@ class RetrievalResult:
     embed_calls: int
     error: str | None = None
     n_chunks_embedded: int = 0
+    retrieval_mode: str = "dense"
+    query_type: str = "concept"
+    fusion_weights: dict[str, float] | None = None
+    rank_diagnostics: list[dict] | None = None
+    sparse_rank_error: str | None = None
+
+
+@dataclass
+class SparseRankResult:
+    ranking: list[int]
+    error: str | None = None
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -70,6 +83,109 @@ def _embed_batch(
     r.raise_for_status()
     data = r.json()
     return [item["embedding"] for item in data["data"]]
+
+
+_IDENTIFIER_RE = re.compile(
+    r"([A-Za-z_][A-Za-z0-9_]*[.:/][A-Za-z0-9_./:-]+|[A-Za-z_][A-Za-z0-9_]*\(\))"
+)
+_CODE_HINT_RE = re.compile(
+    r"\b(api|class|cli|def|function|handler|method|module|parameter|signature|"
+    r"traceback|import|async|await|exception|error|config|endpoint|sdk)\b",
+    re.IGNORECASE,
+)
+
+
+def _classify_query(query: str) -> str:
+    if _IDENTIFIER_RE.search(query):
+        return "identifier"
+    if "`" in query:
+        return "identifier"
+    if _CODE_HINT_RE.search(query) and re.search(r"[A-Za-z_][A-Za-z0-9_]*", query):
+        return "identifier"
+    return "concept"
+
+
+def _fusion_weights(query_type: str, ranker_names: list[str]) -> dict[str, float]:
+    if query_type == "identifier":
+        base = {"dense": 0.6, "bm25": 3.0, "bge_m3_sparse": 3.0}
+    else:
+        base = {"dense": 1.2, "bm25": 0.8, "bge_m3_sparse": 0.8}
+    return {name: base.get(name, 1.0) for name in ranker_names}
+
+
+def _weighted_rrf_fuse(
+    rankings: dict[str, list[int]],
+    *,
+    weights: dict[str, float],
+    k: int,
+) -> tuple[list[int], dict[int, dict]]:
+    scores: dict[int, float] = {}
+    diagnostics: dict[int, dict] = {}
+    for name, ranking in rankings.items():
+        weight = weights.get(name, 1.0)
+        for rank, idx in enumerate(ranking):
+            contribution = weight * (1.0 / (k + rank))
+            scores[idx] = scores.get(idx, 0.0) + contribution
+            diag = diagnostics.setdefault(
+                idx,
+                {"chunk_index": idx, "ranks": {}, "contributions": {}, "fusion_score": 0.0},
+            )
+            diag["ranks"][name] = rank
+            diag["contributions"][name] = round(contribution, 6)
+            diag["fusion_score"] = round(scores[idx], 6)
+    ordered = sorted(scores, key=lambda i: -scores[i])
+    return ordered, diagnostics
+
+
+def _ranking_from_scores(scores: list[float]) -> list[int]:
+    return sorted(range(len(scores)), key=lambda i: -scores[i])
+
+
+def _ranking_from_sparse_payload(payload: Any, n_documents: int) -> list[int]:
+    if isinstance(payload, dict) and isinstance(payload.get("ranking"), list):
+        ranking = [int(i) for i in payload["ranking"]]
+        return [i for i in ranking if 0 <= i < n_documents]
+    if isinstance(payload, dict) and isinstance(payload.get("scores"), list):
+        scores = [float(s) for s in payload["scores"]]
+        if len(scores) == n_documents:
+            return _ranking_from_scores(scores)
+    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+        rows = payload["data"]
+        pairs = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if "index" in row and "score" in row:
+                idx = int(row["index"])
+                if 0 <= idx < n_documents:
+                    pairs.append((idx, float(row["score"])))
+        if pairs:
+            return [idx for idx, _score in sorted(pairs, key=lambda p: -p[1])]
+    return []
+
+
+def _bge_m3_sparse_rank(
+    query: str,
+    documents: list[str],
+    *,
+    endpoint: str,
+    model: str,
+) -> SparseRankResult:
+    try:
+        with httpx.Client(timeout=HTTP_TIMEOUT_S) as client:
+            response = client.post(
+                endpoint,
+                json={"model": model, "query": query, "documents": documents},
+            )
+            response.raise_for_status()
+            ranking = _ranking_from_sparse_payload(response.json(), len(documents))
+    except httpx.HTTPError as e:
+        return SparseRankResult(ranking=[], error=f"{type(e).__name__}: {e}")
+    except (TypeError, ValueError) as e:
+        return SparseRankResult(ranking=[], error=f"{type(e).__name__}: {e}")
+    if not ranking:
+        return SparseRankResult(ranking=[], error="empty sparse ranking")
+    return SparseRankResult(ranking=ranking)
 
 
 def retrieve(
@@ -152,18 +268,48 @@ def retrieve(
 
     cosines = [cosine(avg_q, ce) for ce in chunk_embs]
 
+    query_type = _classify_query(query)
     if hybrid:
         dense_ranked = sorted(range(len(chunks)), key=lambda i: -cosines[i])
-        sparse_ranked = bm25_rank(query, chunk_texts)
-        fused = rrf_fuse([dense_ranked, sparse_ranked])
+        rankings = {
+            "dense": dense_ranked,
+            "bm25": bm25_rank(query, chunk_texts),
+        }
+        sparse_rank_error = None
+        sparse_endpoint = os.environ.get("TRAWL_BGE_M3_SPARSE_URL", "").strip()
+        if sparse_endpoint:
+            sparse_result = _bge_m3_sparse_rank(
+                query, chunk_texts, endpoint=sparse_endpoint, model=model
+            )
+            sparse_rank_error = sparse_result.error
+            if sparse_result.ranking:
+                rankings["bge_m3_sparse"] = sparse_result.ranking
+        weights = _fusion_weights(query_type, list(rankings))
+        fused, diagnostics_by_idx = _weighted_rrf_fuse(
+            rankings,
+            weights=weights,
+            k=int(os.environ.get("TRAWL_HYBRID_RRF_K", "60")),
+        )
         scored = [ScoredChunk(chunk=chunks[i], score=cosines[i]) for i in fused]
+        for idx, diagnostics in diagnostics_by_idx.items():
+            diagnostics["pool_index"] = idx
+            diagnostics["chunk_index"] = chunks[idx].chunk_index
+        rank_diagnostics = [diagnostics_by_idx[i] for i in fused[:k]]
     else:
         scored = [ScoredChunk(chunk=c, score=s) for c, s in zip(chunks, cosines, strict=True)]
         scored.sort(key=lambda s: -s.score)
+        weights = {"dense": 1.0}
+        rank_diagnostics = None
+        sparse_rank_error = None
 
     return RetrievalResult(
         scored=scored[:k],
         elapsed_ms=int((time.monotonic() - t0) * 1000),
         embed_calls=embed_calls,
         n_chunks_embedded=len(chunks),
+        retrieval_mode="hybrid" if hybrid else "dense",
+        query_type=query_type,
+        fusion_weights=weights,
+        rank_diagnostics=rank_diagnostics,
+        sparse_rank_error=sparse_rank_error,
     )

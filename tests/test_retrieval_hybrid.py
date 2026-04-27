@@ -108,8 +108,8 @@ def test_hybrid_on_lexical_match_rises(monkeypatch):
     hybrid_order = [s.chunk.text for s in run(True).scored]
     # Dense puts the lexical-match chunk last.
     assert "asyncio.gather" in dense_order[-1]
-    # Hybrid promotes it to at least the middle slot.
-    assert "asyncio.gather" in hybrid_order[1]
+    # Query-aware hybrid promotes it out of the last slot.
+    assert any("asyncio.gather" in text for text in hybrid_order[:2])
 
 
 def test_hybrid_ordering_differs_from_dense(monkeypatch):
@@ -131,6 +131,91 @@ def test_hybrid_ordering_differs_from_dense(monkeypatch):
     dense_order = [s.chunk.text for s in run(False).scored]
     hybrid_order = [s.chunk.text for s in run(True).scored]
     assert dense_order != hybrid_order
+
+
+def test_identifier_query_uses_query_aware_weights(monkeypatch):
+    chunks = [
+        _chunk("generic dense neighbour one"),
+        _chunk("generic dense neighbour two"),
+        _chunk("the exact lexical match asyncio.gather here"),
+    ]
+    q = [[1.0, 0.0]]
+    docs = [[0.90, 0.10], [0.85, 0.15], [0.50, 0.50]]
+    monkeypatch.setattr(retrieval, "_embed_batch", _fake_embed_factory(q, docs))
+
+    result = retrieval.retrieve("asyncio.gather", chunks, k=3, hybrid=True)
+
+    assert result.query_type == "identifier"
+    assert result.retrieval_mode == "hybrid"
+    assert result.fusion_weights["bm25"] > result.fusion_weights["dense"]
+    assert "asyncio.gather" in result.scored[0].chunk.text
+    assert result.rank_diagnostics
+    top_diag = result.rank_diagnostics[0]
+    assert top_diag["chunk_index"] == result.scored[0].chunk.chunk_index
+    assert "bm25" in top_diag["ranks"]
+    assert "bm25" in top_diag["contributions"]
+
+
+def test_concept_query_keeps_dense_weight_highest(monkeypatch):
+    chunks = [
+        _chunk("overview of dependency injection concepts"),
+        _chunk("exact token dependency injection but less useful"),
+    ]
+    q = [[1.0, 0.0]]
+    docs = [[1.0, 0.0], [0.5, 0.5]]
+    monkeypatch.setattr(retrieval, "_embed_batch", _fake_embed_factory(q, docs))
+
+    result = retrieval.retrieve(
+        "how dependency injection improves testing", chunks, k=2, hybrid=True
+    )
+
+    assert result.query_type == "concept"
+    assert result.fusion_weights["dense"] > result.fusion_weights["bm25"]
+
+
+def test_bge_m3_sparse_rank_participates_when_configured(monkeypatch):
+    chunks = [
+        _chunk("dense neighbour"),
+        _chunk("native sparse exact match"),
+        _chunk("bm25 neighbour sparse"),
+    ]
+    q = [[1.0, 0.0]]
+    docs = [[0.95, 0.05], [0.25, 0.75], [0.80, 0.20]]
+    monkeypatch.setattr(retrieval, "_embed_batch", _fake_embed_factory(q, docs))
+    monkeypatch.setenv("TRAWL_BGE_M3_SPARSE_URL", "http://sparse.example/rank")
+
+    def _fake_sparse_rank(_query, _documents, *, endpoint, model):
+        assert endpoint == "http://sparse.example/rank"
+        assert model == retrieval.DEFAULT_EMBEDDING_MODEL
+        return retrieval.SparseRankResult(ranking=[1, 2, 0])
+
+    monkeypatch.setattr(retrieval, "_bge_m3_sparse_rank", _fake_sparse_rank)
+
+    result = retrieval.retrieve("native sparse", chunks, k=3, hybrid=True)
+
+    assert result.sparse_rank_error is None
+    assert "bge_m3_sparse" in result.fusion_weights
+    assert "native sparse" in result.scored[0].chunk.text
+    assert "bge_m3_sparse" in result.rank_diagnostics[0]["ranks"]
+
+
+def test_bge_m3_sparse_error_falls_back_to_available_rankers(monkeypatch):
+    chunks = [_chunk("alpha beta"), _chunk("gamma delta")]
+    q = [[1.0, 0.0]]
+    docs = [[0.9, 0.1], [0.1, 0.9]]
+    monkeypatch.setattr(retrieval, "_embed_batch", _fake_embed_factory(q, docs))
+    monkeypatch.setenv("TRAWL_BGE_M3_SPARSE_URL", "http://sparse.example/rank")
+
+    def _fake_sparse_rank(_query, _documents, *, endpoint, model):
+        return retrieval.SparseRankResult(ranking=[], error="HTTPStatusError: 500")
+
+    monkeypatch.setattr(retrieval, "_bge_m3_sparse_rank", _fake_sparse_rank)
+
+    result = retrieval.retrieve("alpha", chunks, k=2, hybrid=True)
+
+    assert result.scored
+    assert result.sparse_rank_error == "HTTPStatusError: 500"
+    assert "bge_m3_sparse" not in result.fusion_weights
 
 
 def test_hybrid_on_empty_chunks():

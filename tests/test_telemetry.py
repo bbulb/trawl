@@ -81,6 +81,40 @@ def test_build_event_propagates_rerank_capped_true():
     assert event["rerank_capped"] is True
 
 
+def test_build_event_includes_retrieval_diagnostics_summary():
+    r = _sample_result()
+    r.retrieval_diagnostics = {
+        "mode": "hybrid",
+        "query_type": "identifier",
+        "weights": {"dense": 0.8, "bm25": 1.2, "bge_m3_sparse": 1.2},
+        "rankers": ["dense", "bm25", "bge_m3_sparse"],
+        "chunks": [
+            {
+                "chunk_index": 2,
+                "ranks": {"dense": 2, "bm25": 0, "bge_m3_sparse": 0},
+                "contributions": {
+                    "dense": 0.0129,
+                    "bm25": 0.02,
+                    "bge_m3_sparse": 0.02,
+                },
+            }
+        ],
+    }
+
+    event = telemetry._build_event(r)
+
+    assert event["retrieval_mode"] == "hybrid"
+    assert event["retrieval_query_type"] == "identifier"
+    assert event["retrieval_rankers"] == ["dense", "bm25", "bge_m3_sparse"]
+    assert event["retrieval_fusion_weights"] == {
+        "dense": 0.8,
+        "bm25": 1.2,
+        "bge_m3_sparse": 1.2,
+    }
+    assert event["retrieval_rank_diagnostics"][0]["chunk_index"] == 2
+    assert "text" not in event["retrieval_rank_diagnostics"][0]
+
+
 def test_record_appends_jsonl(tmp_path: Path, monkeypatch):
     target = tmp_path / "t.jsonl"
     monkeypatch.setenv("TRAWL_TELEMETRY", "1")
