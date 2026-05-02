@@ -124,11 +124,12 @@ class PipelineResult:
     # dropped documents or truncated any doc. Stays False when the cap
     # is disabled or when the payload was already under the limits.
     rerank_capped: bool = False
-    # R3 — retrieval fusion diagnostics. Contains chunk indices, raw ranks,
-    # and per-ranker fusion contributions only; never raw chunk text.
+    # Contextual retrieval telemetry for ranking-only prefixes.
     contextual_retrieval_used: bool = False
     context_prefix_chars_total: int = 0
     context_prefix_chars_avg: float = 0.0
+    # R3 — retrieval fusion diagnostics. Contains chunk indices, raw ranks,
+    # and per-ranker fusion contributions only; never raw chunk text.
     retrieval_diagnostics: dict = field(default_factory=dict)
 
     @property

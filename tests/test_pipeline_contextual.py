@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from trawl import pipeline
 from trawl.fetchers.playwright import FetchResult
 from trawl.retrieval import RetrievalResult, ScoredChunk
@@ -120,6 +122,59 @@ def test_full_pipeline_omits_context_texts_when_disabled(monkeypatch, tmp_path):
     assert result.contextual_retrieval_used is False
     assert result.context_prefix_chars_total == 0
     assert result.context_prefix_chars_avg == 0.0
+
+
+def test_profile_retrieval_passes_context_texts_when_enabled(monkeypatch, make_profile):
+    monkeypatch.setenv("TRAWL_CONTEXTUAL_RETRIEVAL", "1")
+    seen: dict[str, object] = {}
+    markdown = "\n\n".join(
+        f"# Section {i}\n\nbody text for section {i} with enough words"
+        for i in range(25)
+    )
+    profile = make_profile("https://example.com/profile-context")
+
+    def _fake_extract_html(_html, query=None):
+        return pipeline.extraction.ExtractedContent(
+            markdown=markdown,
+            extractor="test",
+            source_selector="article",
+            source_xpath="/html/body/article",
+        )
+
+    def _fake_retrieve(query, chunks, *, k, context_texts=None, **_kwargs):
+        seen["context_texts"] = context_texts
+        seen["n_chunks"] = len(chunks)
+        return RetrievalResult(
+            scored=[ScoredChunk(chunk=chunks[0], score=1.0)],
+            elapsed_ms=1,
+            embed_calls=0,
+            n_chunks_embedded=len(chunks),
+        )
+
+    monkeypatch.setattr(pipeline.extraction, "extract_html", _fake_extract_html)
+    monkeypatch.setattr(pipeline.retrieval, "retrieve", _fake_retrieve)
+
+    result = pipeline._build_profile_result(
+        "https://example.com/profile-context",
+        "section",
+        profile=profile,
+        subtree_html="<article></article>",
+        k=1,
+        t_start=time.monotonic(),
+        fetch_ms=1,
+        use_rerank=False,
+    )
+
+    context_texts = seen["context_texts"]
+    assert result.error is None
+    assert result.path == "profile_retrieval"
+    assert isinstance(context_texts, list)
+    assert len(context_texts) == seen["n_chunks"]
+    assert context_texts[0].startswith("Title: Section 0\n")
+    assert "Section: Section 0\n" in context_texts[0]
+    assert result.contextual_retrieval_used is True
+    assert result.context_prefix_chars_total > 0
+    assert result.context_prefix_chars_avg > 0
 
 
 def test_pipeline_result_defaults_contextual_fields():

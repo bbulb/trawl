@@ -73,6 +73,43 @@ def test_retrieve_uses_context_texts_for_bm25_prefilter(monkeypatch):
     assert result.n_chunks_embedded == 1
 
 
+def test_retrieve_hybrid_bm25_uses_context_texts(monkeypatch):
+    chunks = [
+        _chunk("dense body only"),
+        _chunk("plain body only"),
+        _chunk("another plain body only"),
+    ]
+    query_vec = [[1.0, 0.0]]
+    doc_vecs = [[1.0, 0.0], [0.0, 1.0], [0.0, 1.0]]
+    calls = {"n": 0}
+
+    def _fake_embed(_client, _base_url, _model, texts):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return query_vec
+        return doc_vecs[: len(texts)]
+
+    monkeypatch.setattr(retrieval, "_embed_batch", _fake_embed)
+
+    result = retrieval.retrieve(
+        "needle()",
+        chunks,
+        k=1,
+        hybrid=True,
+        context_texts=[
+            "dense context only",
+            "needle() appears only in context",
+            "another plain context",
+        ],
+    )
+
+    assert result.error is None
+    assert result.scored[0].chunk is chunks[1]
+    assert "needle" not in chunks[1].text
+    assert result.retrieval_mode == "hybrid"
+    assert result.rank_diagnostics[0]["ranks"]["bm25"] == 0
+
+
 def test_retrieve_rejects_misaligned_context_texts():
     chunks = [_chunk("one"), _chunk("two")]
 

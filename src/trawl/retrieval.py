@@ -205,6 +205,11 @@ def retrieve(
     `extra_query_texts` allows passing HyDE outputs (or any extra reformulations)
     that will be averaged with the query embedding before scoring.
 
+    `context_texts`, when provided, must align one-to-one with `chunks`.
+    They are ranking-only inputs used for dense embedding, BM25 prefiltering,
+    and BM25 hybrid fusion. Returned `ScoredChunk.chunk` objects are the
+    original `Chunk` instances, so public output text remains unchanged.
+
     When `hybrid=True`, a BM25 ranking is computed over the same chunk
     texts and fused with the dense ranking via RRF. The `score` field
     on each returned `ScoredChunk` still holds the raw dense cosine —
