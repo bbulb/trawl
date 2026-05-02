@@ -82,3 +82,12 @@ def test_retrieve_rejects_misaligned_context_texts():
     assert result.embed_calls == 0
     assert result.n_chunks_embedded == 0
     assert result.error == "context_texts length 1 does not match chunks length 2"
+
+
+def test_retrieve_rejects_context_texts_for_empty_chunks():
+    result = retrieval.retrieve("query", [], k=2, context_texts=["x"])
+
+    assert result.scored == []
+    assert result.embed_calls == 0
+    assert result.n_chunks_embedded == 0
+    assert result.error == "context_texts length 1 does not match chunks length 0"

@@ -217,9 +217,6 @@ def retrieve(
     PDF). `n_chunks_embedded` on the result reports the post-prefilter
     count (equals `len(chunks)` when prefilter is a no-op).
     """
-    if not chunks:
-        return RetrievalResult(scored=[], elapsed_ms=0, embed_calls=0, n_chunks_embedded=0)
-
     if context_texts is not None and len(context_texts) != len(chunks):
         return RetrievalResult(
             scored=[],
@@ -231,6 +228,9 @@ def retrieve(
             ),
             n_chunks_embedded=0,
         )
+
+    if not chunks:
+        return RetrievalResult(scored=[], elapsed_ms=0, embed_calls=0, n_chunks_embedded=0)
 
     t0 = time.monotonic()
     embed_calls = 0
