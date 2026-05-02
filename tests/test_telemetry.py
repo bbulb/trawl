@@ -115,6 +115,20 @@ def test_build_event_includes_retrieval_diagnostics_summary():
     assert "text" not in event["retrieval_rank_diagnostics"][0]
 
 
+def test_build_event_includes_contextual_retrieval_stats():
+    r = _sample_result()
+    r.contextual_retrieval_used = True
+    r.context_prefix_chars_total = 123
+    r.context_prefix_chars_avg = 41.0
+
+    event = telemetry._build_event(r)
+
+    assert event["contextual_retrieval_used"] is True
+    assert event["context_prefix_chars_total"] == 123
+    assert event["context_prefix_chars_avg"] == 41.0
+    assert "context_texts" not in event
+
+
 def test_record_appends_jsonl(tmp_path: Path, monkeypatch):
     target = tmp_path / "t.jsonl"
     monkeypatch.setenv("TRAWL_TELEMETRY", "1")
