@@ -21,7 +21,17 @@ from dataclasses import asdict, dataclass, field
 from inspect import Parameter, signature
 from urllib.parse import urlsplit
 
-from . import chunking, enrichment, extraction, fetch_cache, hyde, reranking, retrieval, telemetry
+from . import (
+    chunking,
+    contextual,
+    enrichment,
+    extraction,
+    fetch_cache,
+    hyde,
+    reranking,
+    retrieval,
+    telemetry,
+)
 from .fetchers import github, passthrough, pdf, playwright, stackexchange, wikipedia, youtube
 
 logger = logging.getLogger(__name__)
@@ -116,6 +126,9 @@ class PipelineResult:
     rerank_capped: bool = False
     # R3 — retrieval fusion diagnostics. Contains chunk indices, raw ranks,
     # and per-ranker fusion contributions only; never raw chunk text.
+    contextual_retrieval_used: bool = False
+    context_prefix_chars_total: int = 0
+    context_prefix_chars_avg: float = 0.0
     retrieval_diagnostics: dict = field(default_factory=dict)
 
     @property
@@ -203,6 +216,12 @@ def _retrieval_diagnostics(result: retrieval.RetrievalResult) -> dict:
     if result.sparse_rank_error:
         diagnostics["sparse_error"] = result.sparse_rank_error
     return diagnostics
+
+
+def _contextual_batch(chunks: list[chunking.Chunk], page_title: str):
+    if not contextual.is_enabled():
+        return None
+    return contextual.build_contextual_texts(chunks, page_title=page_title)
 
 
 def _decode_passthrough_body(body: bytes, content_type: str | None) -> str:
@@ -421,6 +440,7 @@ def _build_profile_result(
     rerank_ms = 0
     rerank_capped = False
     n_chunks_embedded = 0
+    context_batch = None
     if len(chunks) <= PROFILE_DIRECT_CHUNK_THRESHOLD:
         path = "profile_direct"
         retrieved_dicts = [_chunk_to_dict(c, score=None, title=page_title) for c in chunks]
@@ -432,8 +452,14 @@ def _build_profile_result(
         retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
         hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "0") == "1"
         chunk_budget = _read_chunk_budget()
+        context_batch = _contextual_batch(chunks, page_title)
         retrieved = retrieval.retrieve(
-            query, chunks, k=retrieve_k, hybrid=hybrid_flag, chunk_budget=chunk_budget
+            query,
+            chunks,
+            k=retrieve_k,
+            hybrid=hybrid_flag,
+            chunk_budget=chunk_budget,
+            context_texts=context_batch.texts if context_batch else None,
         )
         retrieval_ms = int((time.monotonic() - t_ret) * 1000)
         n_chunks_embedded = retrieved.n_chunks_embedded
@@ -446,6 +472,13 @@ def _build_profile_result(
                 error=retrieved.error,
                 path=path,
                 n_chunks_embedded=retrieved.n_chunks_embedded,
+                contextual_retrieval_used=bool(context_batch),
+                context_prefix_chars_total=(
+                    context_batch.prefix_chars_total if context_batch else 0
+                ),
+                context_prefix_chars_avg=(
+                    context_batch.prefix_chars_avg if context_batch else 0.0
+                ),
                 retrieval_diagnostics=_retrieval_diagnostics(retrieved),
             )
         if use_rerank and retrieved.scored:
@@ -479,6 +512,19 @@ def _build_profile_result(
         rerank_used=use_rerank and path == "profile_retrieval",
         rerank_ms=rerank_ms,
         rerank_capped=rerank_capped,
+        contextual_retrieval_used=(
+            bool(context_batch) if path == "profile_retrieval" else False
+        ),
+        context_prefix_chars_total=(
+            context_batch.prefix_chars_total
+            if path == "profile_retrieval" and context_batch
+            else 0
+        ),
+        context_prefix_chars_avg=(
+            context_batch.prefix_chars_avg
+            if path == "profile_retrieval" and context_batch
+            else 0.0
+        ),
         excerpts=enrichment.extract_excerpts(emitted_chunks),
         outbound_links=enrichment.extract_outbound_links(emitted_chunks),
         page_entities=enrichment.extract_page_entities(
@@ -1019,6 +1065,7 @@ def _run_full_pipeline(
     retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
     hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "0") == "1"
     chunk_budget = _read_chunk_budget()
+    context_batch = _contextual_batch(chunks, page_title)
     retrieved = retrieval.retrieve(
         query,
         chunks,
@@ -1026,6 +1073,7 @@ def _run_full_pipeline(
         extra_query_texts=extras,
         hybrid=hybrid_flag,
         chunk_budget=chunk_budget,
+        context_texts=context_batch.texts if context_batch else None,
     )
     if retrieved.error:
         return _error_result(
@@ -1042,6 +1090,13 @@ def _run_full_pipeline(
             hyde_used=use_hyde,
             hyde_text=hyde_text,
             n_chunks_embedded=retrieved.n_chunks_embedded,
+            contextual_retrieval_used=bool(context_batch),
+            context_prefix_chars_total=(
+                context_batch.prefix_chars_total if context_batch else 0
+            ),
+            context_prefix_chars_avg=(
+                context_batch.prefix_chars_avg if context_batch else 0.0
+            ),
             retrieval_diagnostics=_retrieval_diagnostics(retrieved),
         )
 
@@ -1088,6 +1143,13 @@ def _run_full_pipeline(
         content_type=content_type,
         cache_hit=cache_hit,
         n_chunks_embedded=retrieved.n_chunks_embedded,
+        contextual_retrieval_used=bool(context_batch),
+        context_prefix_chars_total=(
+            context_batch.prefix_chars_total if context_batch else 0
+        ),
+        context_prefix_chars_avg=(
+            context_batch.prefix_chars_avg if context_batch else 0.0
+        ),
         retrieval_diagnostics=_retrieval_diagnostics(retrieved),
     )
 
