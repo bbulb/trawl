@@ -198,6 +198,7 @@ def retrieve(
     extra_query_texts: list[str] | None = None,
     hybrid: bool = False,
     chunk_budget: int = 0,
+    context_texts: list[str] | None = None,
 ) -> RetrievalResult:
     """Embed query + chunks, return the top-k chunks by cosine similarity.
 
@@ -219,6 +220,18 @@ def retrieve(
     if not chunks:
         return RetrievalResult(scored=[], elapsed_ms=0, embed_calls=0, n_chunks_embedded=0)
 
+    if context_texts is not None and len(context_texts) != len(chunks):
+        return RetrievalResult(
+            scored=[],
+            elapsed_ms=0,
+            embed_calls=0,
+            error=(
+                f"context_texts length {len(context_texts)} "
+                f"does not match chunks length {len(chunks)}"
+            ),
+            n_chunks_embedded=0,
+        )
+
     t0 = time.monotonic()
     embed_calls = 0
 
@@ -226,10 +239,15 @@ def retrieve(
     # pollute the vectors. Heading path is still prepended because it
     # carries strong topical signal ("명량 해전" header tells the
     # embedding what the section is about even before the body).
-    chunk_texts = [
-        (c.heading + "\n\n" + (c.embed_text or c.text)) if c.heading else (c.embed_text or c.text)
-        for c in chunks
-    ]
+    if context_texts is not None:
+        chunk_texts = list(context_texts)
+    else:
+        chunk_texts = [
+            (c.heading + "\n\n" + (c.embed_text or c.text))
+            if c.heading
+            else (c.embed_text or c.text)
+            for c in chunks
+        ]
 
     # BM25 prefilter. Only runs when a positive budget is set and the
     # pool actually exceeds it; otherwise it's cheap no-op. We keep
