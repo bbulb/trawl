@@ -288,6 +288,9 @@ expects the filename you passed to `-m`). Complete list in
 |---|---|---|
 | `TRAWL_EMBED_URL` | `http://localhost:8081/v1` | bge-m3 embedding endpoint |
 | `TRAWL_EMBED_MODEL` | `bge-m3-Q8_0.gguf` | Embedding model name |
+| `TRAWL_EMBED_CACHE_TTL` | `0` | Document embedding cache TTL in seconds. `0` disables the cache. |
+| `TRAWL_EMBED_CACHE_PATH` | `~/.cache/trawl/embeddings` | Directory for cached document embedding vectors. |
+| `TRAWL_EMBED_CACHE_MAX_MB` | `512` | Soft size cap for the embedding cache; old entries are trimmed by mtime. |
 | `TRAWL_RERANK_URL` | `http://localhost:8083/v1` | bge-reranker-v2-m3 endpoint |
 | `TRAWL_RERANK_MODEL` | `bge-reranker-v2-m3` | Reranker model name |
 | `TRAWL_HYDE_URL` | `http://localhost:8082/v1` | Small utility LLM for HyDE |
