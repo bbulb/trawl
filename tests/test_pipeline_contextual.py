@@ -126,10 +126,11 @@ def test_full_pipeline_omits_context_texts_when_disabled(monkeypatch, tmp_path):
 
 def test_profile_retrieval_passes_context_texts_when_enabled(monkeypatch, make_profile):
     monkeypatch.setenv("TRAWL_CONTEXTUAL_RETRIEVAL", "1")
+    monkeypatch.setattr(pipeline, "PROFILE_DIRECT_CHUNK_THRESHOLD", 2)
     seen: dict[str, object] = {}
     markdown = "\n\n".join(
         f"# Section {i}\n\nbody text for section {i} with enough words"
-        for i in range(25)
+        for i in range(4)
     )
     profile = make_profile("https://example.com/profile-context")
 
