@@ -293,8 +293,9 @@ expects the filename you passed to `-m`). Complete list in
 | `TRAWL_HYDE_URL` | `http://localhost:8082/v1` | Small utility LLM for HyDE |
 | `TRAWL_HYDE_MODEL` | `gemma-4-E4B-it-Q8_0.gguf` | HyDE model name |
 | `TRAWL_HYDE_SLOT` | *(unset)* | Pin HyDE to a llama-server slot for KV-cache reuse |
-| `TRAWL_CONTEXTUAL_RETRIEVAL` | `0` | Set to `1` to prepend deterministic page/section context to dense and BM25 retrieval inputs. Output chunks are unchanged. |
+| `TRAWL_CONTEXTUAL_RETRIEVAL` | `0` | `0` disables contextual retrieval, `1` forces deterministic page/section context for dense and BM25 retrieval inputs, and `auto` enables it for identifier/code-heavy queries, large pages, and repeated-record pages. Output chunks are unchanged. |
 | `TRAWL_CONTEXT_PREFIX_MAX_CHARS` | `320` | Maximum characters of contextual prefix per chunk before the chunk body is appended. |
+| `TRAWL_CONTEXT_PREFIX_VERSION` | `deterministic-v1` | Prefix version string used for contextual embedding cache invalidation. |
 | `TRAWL_VLM_URL` | `http://localhost:8080/v1` | Vision LLM for page profiling |
 | `TRAWL_VLM_MODEL` | `gemma` | Vision model name |
 | `TRAWL_VLM_TIMEOUT` | `120` | VLM request timeout (seconds) |
