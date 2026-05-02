@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 
+from . import contextual, embedding_cache
 from .bm25 import bm25_rank
 from .chunking import Chunk
 
@@ -83,6 +84,54 @@ def _embed_batch(
     r.raise_for_status()
     data = r.json()
     return [item["embedding"] for item in data["data"]]
+
+
+def _embed_documents_with_cache(
+    client: httpx.Client,
+    base_url: str,
+    model: str,
+    texts: list[str],
+    *,
+    contextual_mode: str,
+) -> tuple[list[list[float]], int]:
+    embeddings: list[list[float] | None] = []
+    misses: list[tuple[int, str, embedding_cache.CacheKey]] = []
+    prefix_max = contextual.max_prefix_chars()
+    prefix_ver = contextual.prefix_version()
+
+    for index, text in enumerate(texts):
+        key = embedding_cache.CacheKey(
+            model=model,
+            base_url=base_url,
+            text=text,
+            contextual_mode=contextual_mode,
+            prefix_max_chars=prefix_max,
+            prefix_version=prefix_ver,
+        )
+        cached = embedding_cache.get(key)
+        if cached is None:
+            embeddings.append(None)
+            misses.append((index, text, key))
+        else:
+            embeddings.append(cached)
+
+    embed_calls = 0
+    for start in range(0, len(misses), EMBEDDING_BATCH):
+        batch = misses[start : start + EMBEDDING_BATCH]
+        if not batch:
+            continue
+        batch_embeddings = _embed_batch(
+            client,
+            base_url,
+            model,
+            [text for _index, text, _key in batch],
+        )
+        embed_calls += 1
+        for (index, _text, key), embedding in zip(batch, batch_embeddings, strict=True):
+            embeddings[index] = embedding
+            embedding_cache.put(key, embedding)
+
+    return [embedding for embedding in embeddings if embedding is not None], embed_calls
 
 
 _IDENTIFIER_RE = re.compile(
@@ -272,11 +321,15 @@ def retrieve(
             q_embs = _embed_batch(client, base_url, model, query_inputs)
             embed_calls += 1
 
-            chunk_embs: list[list[float]] = []
-            for start in range(0, len(chunk_texts), EMBEDDING_BATCH):
-                batch = chunk_texts[start : start + EMBEDDING_BATCH]
-                chunk_embs.extend(_embed_batch(client, base_url, model, batch))
-                embed_calls += 1
+            contextual_mode = contextual.mode() if context_texts is not None else "off"
+            chunk_embs, doc_embed_calls = _embed_documents_with_cache(
+                client,
+                base_url,
+                model,
+                chunk_texts,
+                contextual_mode=contextual_mode,
+            )
+            embed_calls += doc_embed_calls
     except httpx.HTTPError as e:
         return RetrievalResult(
             scored=[],
