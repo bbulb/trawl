@@ -219,8 +219,8 @@ def _retrieval_diagnostics(result: retrieval.RetrievalResult) -> dict:
     return diagnostics
 
 
-def _contextual_batch(chunks: list[chunking.Chunk], page_title: str):
-    if not contextual.is_enabled():
+def _contextual_batch(chunks: list[chunking.Chunk], page_title: str, query: str = ""):
+    if not contextual.should_use_contextual(query=query, chunks=chunks, page_title=page_title):
         return None
     return contextual.build_contextual_texts(chunks, page_title=page_title)
 
@@ -453,7 +453,7 @@ def _build_profile_result(
         retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
         hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "0") == "1"
         chunk_budget = _read_chunk_budget()
-        context_batch = _contextual_batch(chunks, page_title)
+        context_batch = _contextual_batch(chunks, page_title, query or "")
         retrieved = retrieval.retrieve(
             query,
             chunks,
@@ -1066,7 +1066,7 @@ def _run_full_pipeline(
     retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
     hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "0") == "1"
     chunk_budget = _read_chunk_budget()
-    context_batch = _contextual_batch(chunks, page_title)
+    context_batch = _contextual_batch(chunks, page_title, query)
     retrieved = retrieval.retrieve(
         query,
         chunks,

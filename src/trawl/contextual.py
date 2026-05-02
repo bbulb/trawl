@@ -7,11 +7,23 @@ The returned strings are ranking-only inputs. They must not replace
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 from .chunking import Chunk
 
 DEFAULT_MAX_PREFIX_CHARS = 320
+PREFIX_VERSION = "deterministic-v1"
+AUTO_MIN_CHUNKS = 16
+AUTO_TINY_PAGE_MAX_CHUNKS = 2
+_IDENTIFIER_RE = re.compile(
+    r"([A-Za-z_][A-Za-z0-9_]*[.:/][A-Za-z0-9_./:-]+|[A-Za-z_][A-Za-z0-9_]*\(\))"
+)
+_CODE_HINT_RE = re.compile(
+    r"\b(api|class|cli|def|function|handler|method|module|parameter|signature|"
+    r"traceback|import|async|await|exception|error|config|endpoint|sdk)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -27,13 +39,19 @@ class ContextualTextBatch:
     prefix_chars_avg: float
 
 
+def mode() -> str:
+    """Return contextual retrieval mode: off, on, or auto."""
+    raw = os.environ.get("TRAWL_CONTEXTUAL_RETRIEVAL", "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return "on"
+    if raw == "auto":
+        return "auto"
+    return "off"
+
+
 def is_enabled() -> bool:
-    """Return True when contextual retrieval is enabled by environment."""
-    return os.environ.get("TRAWL_CONTEXTUAL_RETRIEVAL", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }
+    """Return True only when contextual retrieval is forced on."""
+    return mode() == "on"
 
 
 def max_prefix_chars() -> int:
@@ -44,6 +62,46 @@ def max_prefix_chars() -> int:
     except ValueError:
         return DEFAULT_MAX_PREFIX_CHARS
     return max(0, value)
+
+
+def prefix_version() -> str:
+    """Return the contextual prefix version used for cache keying."""
+    return os.environ.get("TRAWL_CONTEXT_PREFIX_VERSION", PREFIX_VERSION).strip() or PREFIX_VERSION
+
+
+def should_use_contextual(
+    *,
+    query: str,
+    chunks: list[Chunk],
+    page_title: str = "",
+) -> bool:
+    """Return whether contextual retrieval should be used for this request."""
+    current = mode()
+    if current == "off":
+        return False
+    if max_prefix_chars() <= 0:
+        return False
+    if current == "on":
+        return True
+    if not chunks:
+        return False
+    if any(c.record_group_id is not None for c in chunks):
+        return True
+    if len(chunks) <= AUTO_TINY_PAGE_MAX_CHUNKS:
+        return False
+    if _looks_identifier_query(query):
+        return True
+    if len(chunks) >= AUTO_MIN_CHUNKS:
+        return True
+    return False
+
+
+def _looks_identifier_query(query: str) -> bool:
+    if _IDENTIFIER_RE.search(query):
+        return True
+    if "`" in query:
+        return True
+    return bool(_CODE_HINT_RE.search(query) and re.search(r"[A-Za-z_][A-Za-z0-9_]*", query))
 
 
 def build_contextual_text(
