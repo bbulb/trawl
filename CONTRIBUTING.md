@@ -18,16 +18,8 @@ mamba activate trawl
 cp .env.example .env                     # only if overriding defaults
 ```
 
-If you prefer pip/venv:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
-playwright install chromium
-```
-
-All commands below assume you're inside the env.
+All commands below assume you're inside the `trawl` mamba environment,
+or that you prefix them with `mamba run -n trawl`.
 
 ## Running tests
 

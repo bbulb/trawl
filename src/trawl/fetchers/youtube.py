@@ -20,6 +20,7 @@ from .playwright import FetchResult, make_error_result
 logger = logging.getLogger(__name__)
 
 _YT_HOSTS = {"www.youtube.com", "youtube.com", "m.youtube.com", "youtu.be"}
+_BROWSER_FALLBACK_REQUIRED = "browser fallback required"
 
 _PATH_ID_RE = re.compile(r"^/(?:shorts|live)/([A-Za-z0-9_-]{11})(?:[/?#]|$)")
 
@@ -59,7 +60,11 @@ def _extract_video_id(url: str) -> str | None:
     return None
 
 
-def fetch(url: str) -> FetchResult:
+def _browser_fallback_result(url: str, t0: float, reason: str) -> FetchResult:
+    return make_error_result(url, "youtube", t0, f"{_BROWSER_FALLBACK_REQUIRED}: {reason}")
+
+
+def fetch(url: str, *, allow_browser_fallback: bool = True) -> FetchResult:
     """Fetch a YouTube video's transcript text.
 
     On the happy path (transcript available), returns the transcript as
@@ -128,4 +133,6 @@ def fetch(url: str) -> FetchResult:
         )
 
     # Fallback: render the page with Playwright to get title/description.
-    return pw.fetch(url)
+    if allow_browser_fallback:
+        return pw.fetch(url)
+    return _browser_fallback_result(url, t0, "YouTube transcript unavailable")

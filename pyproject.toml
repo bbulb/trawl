@@ -52,6 +52,9 @@ pdf-backends = [
     "unstructured[pdf]>=0.16",
     "docling>=2.0",
 ]
+scrapling = [
+    "scrapling[fetchers]>=0.4.7,<0.5",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -59,6 +62,7 @@ dev = [
 
 [project.scripts]
 trawl-mcp = "trawl_mcp.server:_cli_entry"
+trawl-doctor = "trawl.diagnostics:_cli_entry"
 
 [project.urls]
 Homepage = "https://github.com/bbulb/trawl"

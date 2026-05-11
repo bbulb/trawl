@@ -60,6 +60,8 @@ class FetchResult:
     elapsed_ms: int
     error: str | None = None
     content_type: str | None = None
+    etag: str | None = None
+    last_modified: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -306,12 +308,22 @@ def _open_context(
         _unwrap_shadow_dom(page)
         html = page.content()
         content_type = None
+        etag = None
+        last_modified = None
         if response is not None:
             try:
                 content_type = response.header_value("content-type")
             except Exception:
                 content_type = None
-        yield context, page, html, content_type
+            try:
+                etag = response.header_value("etag")
+            except Exception:
+                etag = None
+            try:
+                last_modified = response.header_value("last-modified")
+            except Exception:
+                last_modified = None
+        yield context, page, html, content_type, etag, last_modified
     finally:
         try:
             context.close()
@@ -350,7 +362,7 @@ def fetch(
                 timeout_s=timeout_s,
                 user_agent=user_agent,
                 profile_selector=profile_selector,
-            ) as (_ctx, _page, html, content_type):
+            ) as (_ctx, _page, html, content_type, etag, last_modified):
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
                 host_stats.record(url, elapsed_ms)
                 return FetchResult(
@@ -361,6 +373,8 @@ def fetch(
                     fetcher="playwright",
                     elapsed_ms=elapsed_ms,
                     content_type=content_type,
+                    etag=etag,
+                    last_modified=last_modified,
                 )
         except PlaywrightTimeoutError as e:
             return FetchResult(
@@ -419,7 +433,7 @@ def render_session(
             timeout_s=timeout_s,
             user_agent=user_agent,
             profile_selector=profile_selector,
-        ) as (_ctx, page, html, _content_type):
+        ) as (_ctx, page, html, _content_type, _etag, _last_modified):
             yield RenderResult(
                 url=url,
                 page=page,

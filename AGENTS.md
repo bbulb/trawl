@@ -13,16 +13,11 @@ mamba env create -f environment.yml
 mamba run -n trawl playwright install chromium
 ```
 
-For a venv workflow:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
-playwright install chromium
-```
-
-Run the full unit suite with `pytest`. Run targeted tests with `pytest tests/test_youtube_fetcher.py` or `pytest tests/test_pipeline.py`. Start the MCP server locally with `trawl-mcp` after installing the package.
+Run commands inside that environment, either after `mamba activate trawl`
+or by prefixing with `mamba run -n trawl`. Run the full unit suite with
+`pytest`. Run targeted tests with `pytest tests/test_youtube_fetcher.py`
+or `pytest tests/test_pipeline.py`. Start the MCP server locally with
+`trawl-mcp` after installing the package.
 
 ## Coding Style & Naming Conventions
 

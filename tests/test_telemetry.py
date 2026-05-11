@@ -65,6 +65,8 @@ def test_build_event_fields():
     assert event["fetch_ms"] == 100
     assert event["total_ms"] == 140
     assert event["n_chunks_total"] == 7
+    assert event["embed_cache_hits"] == 0
+    assert event["embed_cache_misses"] == 0
     assert event["error"] is None
     assert "ts" in event and event["ts"].endswith("Z")
     # Must NOT contain raw query, chunks, or hyde_text
@@ -127,6 +129,17 @@ def test_build_event_includes_contextual_retrieval_stats():
     assert event["context_prefix_chars_total"] == 123
     assert event["context_prefix_chars_avg"] == 41.0
     assert "context_texts" not in event
+
+
+def test_build_event_includes_embedding_cache_metrics():
+    r = _sample_result()
+    r.embed_cache_hits = 2
+    r.embed_cache_misses = 5
+
+    event = telemetry._build_event(r)
+
+    assert event["embed_cache_hits"] == 2
+    assert event["embed_cache_misses"] == 5
 
 
 def test_record_appends_jsonl(tmp_path: Path, monkeypatch):

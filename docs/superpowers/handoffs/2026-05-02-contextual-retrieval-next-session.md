@@ -37,8 +37,8 @@ a2197ad feat(retrieval): add contextual prefix builder
 
 ## 검증 결과
 
-Reference environment는 mamba env `trawl`이다. `.venv`가 아니라 아래 명령을
-사용한다.
+Reference environment는 mamba env `trawl`이다. 로컬 virtualenv가 아니라 아래
+명령을 사용한다.
 
 ```bash
 mamba run -n trawl pytest tests/test_contextual.py \
@@ -260,7 +260,7 @@ If contextual retrieval is neutral or fails gate:
 
 ## Cautions
 
-- Use `mamba run -n trawl`, not `.venv`.
+- Use `mamba run -n trawl`, not a local virtualenv.
 - Do not treat the previous `14/15` parity result as a contextual regression; both
   modes failed the same case in the same environment.
 - Do not change reranker inputs in this measurement pass.

@@ -35,6 +35,8 @@ def _entry(
     content_type: str | None = "text/html",
     cached_at: float | None = None,
     fetch_elapsed_ms: int = 1234,
+    etag: str | None = None,
+    last_modified: str | None = None,
 ) -> fetch_cache.CachedFetch:
     return fetch_cache.CachedFetch(
         url=url,
@@ -44,6 +46,8 @@ def _entry(
         content_type=content_type,
         cached_at=cached_at if cached_at is not None else time.time(),
         fetch_elapsed_ms=fetch_elapsed_ms,
+        etag=etag,
+        last_modified=last_modified,
     )
 
 
@@ -51,7 +55,7 @@ def _entry(
 
 
 def test_put_then_get_returns_equal_record():
-    entry = _entry()
+    entry = _entry(etag='"abc"', last_modified="Mon, 04 May 2026 00:00:00 GMT")
     fetch_cache.put(entry)
     got = fetch_cache.get(entry.url)
     assert got is not None
@@ -61,6 +65,9 @@ def test_put_then_get_returns_equal_record():
     assert got.fetcher_used == entry.fetcher_used
     assert got.content_type == entry.content_type
     assert got.fetch_elapsed_ms == entry.fetch_elapsed_ms
+    assert got.etag == '"abc"'
+    assert got.last_modified == "Mon, 04 May 2026 00:00:00 GMT"
+    assert got.content_hash == fetch_cache.content_hash(entry.markdown)
 
 
 def test_get_missing_url_returns_none():
@@ -98,6 +105,34 @@ def test_none_content_type_roundtrips():
     assert got.content_type is None
 
 
+def test_legacy_record_without_revalidation_fields_still_reads():
+    url = "https://example.com/legacy"
+    path = fetch_cache._path_for(url)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema": fetch_cache.SCHEMA_VERSION,
+                "url": url,
+                "markdown": "# legacy",
+                "page_title": "legacy",
+                "fetcher_used": "playwright+trafilatura",
+                "content_type": "text/html",
+                "cached_at": time.time(),
+                "fetch_elapsed_ms": 10,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    got = fetch_cache.get(url)
+
+    assert got is not None
+    assert got.etag is None
+    assert got.last_modified is None
+    assert got.content_hash == fetch_cache.content_hash("# legacy")
+
+
 # ---------- TTL expiry
 
 
@@ -125,6 +160,99 @@ def test_get_with_explicit_now_controls_expiry():
     # 400s after cached_at is past the TTL.
     fetch_cache.put(entry)  # re-put since previous get may have deleted
     assert fetch_cache.get(entry.url, now=1400.0) is None
+
+
+def test_get_with_state_returns_stale_entry_without_deleting():
+    entry = _entry(cached_at=1000.0, etag='"old"')
+    fetch_cache.put(entry)
+
+    got, is_stale = fetch_cache.get_with_state(entry.url, now=1400.0)
+
+    assert got is not None
+    assert is_stale is True
+    assert got.etag == '"old"'
+    assert fetch_cache._path_for(entry.url).exists()
+
+
+def test_revalidate_not_modified_refreshes_cached_entry(monkeypatch):
+    entry = _entry(
+        cached_at=1000.0,
+        etag='"old"',
+        last_modified="Mon, 04 May 2026 00:00:00 GMT",
+    )
+    fetch_cache.put(entry)
+    seen_headers: dict[str, str] = {}
+
+    class FakeResponse:
+        status_code = 304
+        headers = {"etag": '"new"', "last-modified": "Mon, 04 May 2026 01:00:00 GMT"}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def get(self, url, *, headers):
+            assert url == entry.url
+            seen_headers.update(headers)
+            return FakeResponse()
+
+    monkeypatch.setattr(fetch_cache.httpx, "Client", FakeClient)
+
+    result = fetch_cache.revalidate(entry, now=2000.0)
+
+    assert result.status == "not_modified"
+    assert seen_headers == {
+        "If-None-Match": '"old"',
+        "If-Modified-Since": "Mon, 04 May 2026 00:00:00 GMT",
+    }
+    refreshed = fetch_cache.get(entry.url, now=2001.0)
+    assert refreshed is not None
+    assert refreshed.cached_at == 2000.0
+    assert refreshed.etag == '"new"'
+    assert refreshed.last_modified == "Mon, 04 May 2026 01:00:00 GMT"
+
+
+def test_revalidate_modified_reports_200_without_reusing_stale(monkeypatch):
+    entry = _entry(cached_at=1000.0, etag='"old"')
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"etag": '"replacement"'}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def get(self, _url, *, headers):
+            assert headers == {"If-None-Match": '"old"'}
+            return FakeResponse()
+
+    monkeypatch.setattr(fetch_cache.httpx, "Client", FakeClient)
+
+    result = fetch_cache.revalidate(entry, now=2000.0)
+
+    assert result.status == "modified"
+    assert result.etag == '"replacement"'
+
+
+def test_revalidate_without_validators_reports_missing_validators():
+    entry = _entry(cached_at=1000.0)
+
+    result = fetch_cache.revalidate(entry, now=2000.0)
+
+    assert result.status == "missing_validators"
 
 
 # ---------- disable via env

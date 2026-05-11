@@ -39,8 +39,10 @@ import logging
 import os
 import tempfile
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,7 @@ SCHEMA_VERSION = 1
 DEFAULT_TTL_SECONDS = 300
 DEFAULT_MAX_MB = 100
 DEFAULT_CACHE_DIR = "~/.cache/trawl/fetches"
+DEFAULT_REVALIDATE_TIMEOUT_SECONDS = 10.0
 
 # Reclaim 20% of the cap so a single trim doesn't thrash. Value picked
 # to balance "rarely trim" against "don't evict more than necessary".
@@ -72,6 +75,20 @@ class CachedFetch:
     extractor: str | None = None
     source_selector: str | None = None
     source_xpath: str | None = None
+    etag: str | None = None
+    last_modified: str | None = None
+    content_hash: str | None = None
+
+
+@dataclass
+class RevalidationResult:
+    """Outcome of a conditional HTTP cache revalidation attempt."""
+
+    status: str
+    elapsed_ms: int
+    etag: str | None = None
+    last_modified: str | None = None
+    error: str | None = None
 
 
 # ---------- Env helpers
@@ -90,6 +107,18 @@ def _max_bytes() -> int:
     except ValueError:
         mb = DEFAULT_MAX_MB
     return max(mb, 1) * 1024 * 1024
+
+
+def _revalidate_timeout_seconds() -> float:
+    try:
+        return float(
+            os.environ.get(
+                "TRAWL_FETCH_CACHE_REVALIDATE_TIMEOUT",
+                str(DEFAULT_REVALIDATE_TIMEOUT_SECONDS),
+            )
+        )
+    except ValueError:
+        return DEFAULT_REVALIDATE_TIMEOUT_SECONDS
 
 
 def _cache_dir() -> Path:
@@ -112,6 +141,11 @@ def _path_for(url: str) -> Path:
     return _cache_dir() / f"{_key_for(url)}.json"
 
 
+def content_hash(markdown: str) -> str:
+    """Return the stable content hash stored with cache records."""
+    return hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+
+
 # ---------- Public API
 
 
@@ -124,28 +158,114 @@ def get(url: str, *, now: float | None = None) -> CachedFetch | None:
     if not is_enabled():
         return None
 
+    record, is_stale = _read(url, now=now)
+    if record is None:
+        return None
+    if is_stale:
+        _safe_unlink(_path_for(url))
+        return None
+    return record
+
+
+def get_with_state(url: str, *, now: float | None = None) -> tuple[CachedFetch | None, bool]:
+    """Return ``(record, is_stale)`` without deleting stale records.
+
+    This is used by the pipeline to attempt HTTP revalidation before
+    falling back to the existing stale-entry refetch behavior.
+    """
+    return _read(url, now=now)
+
+
+def revalidate(entry: CachedFetch, *, now: float | None = None) -> RevalidationResult:
+    """Conditionally revalidate ``entry`` using ETag/Last-Modified.
+
+    A ``304`` refreshes the cached record's ``cached_at`` timestamp and
+    preserves the existing markdown. A ``2xx`` non-304 means the origin
+    changed; callers should perform a normal fetch/render and replace the
+    cache with that pipeline output. Missing validators or HTTP errors
+    return status strings rather than raising.
+    """
+    headers: dict[str, str] = {}
+    if entry.etag:
+        headers["If-None-Match"] = entry.etag
+    if entry.last_modified:
+        headers["If-Modified-Since"] = entry.last_modified
+    if not headers:
+        return RevalidationResult(status="missing_validators", elapsed_ms=0)
+
+    t0 = time.monotonic()
+    try:
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=_revalidate_timeout_seconds(),
+            headers={"User-Agent": "trawl/0.1 (cache revalidation)"},
+        ) as client:
+            resp = client.get(entry.url, headers=headers)
+    except httpx.HTTPError as e:
+        return RevalidationResult(
+            status="error",
+            elapsed_ms=int((time.monotonic() - t0) * 1000),
+            error=f"{type(e).__name__}: {e}",
+        )
+
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+    etag = _header(resp.headers, "etag") or entry.etag
+    last_modified = _header(resp.headers, "last-modified") or entry.last_modified
+    if resp.status_code == 304:
+        refreshed = replace(
+            entry,
+            cached_at=time.time() if now is None else now,
+            etag=etag,
+            last_modified=last_modified,
+            content_hash=entry.content_hash or content_hash(entry.markdown),
+        )
+        put(refreshed)
+        return RevalidationResult(
+            status="not_modified",
+            elapsed_ms=elapsed_ms,
+            etag=etag,
+            last_modified=last_modified,
+        )
+    if 200 <= resp.status_code < 300:
+        return RevalidationResult(
+            status="modified",
+            elapsed_ms=elapsed_ms,
+            etag=etag,
+            last_modified=last_modified,
+        )
+    return RevalidationResult(
+        status="error",
+        elapsed_ms=elapsed_ms,
+        etag=etag,
+        last_modified=last_modified,
+        error=f"unexpected status {resp.status_code}",
+    )
+
+
+def _read(url: str, *, now: float | None = None) -> tuple[CachedFetch | None, bool]:
+    if not is_enabled():
+        return None, False
+
     path = _path_for(url)
     if not path.exists():
-        return None
+        return None, False
 
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         logger.debug("fetch_cache: dropping unreadable entry %s: %s", path, e)
         _safe_unlink(path)
-        return None
+        return None, False
 
     if raw.get("schema") != SCHEMA_VERSION:
         logger.debug("fetch_cache: schema mismatch at %s", path)
         _safe_unlink(path)
-        return None
+        return None, False
 
     now_ts = time.time() if now is None else now
     cached_at = float(raw.get("cached_at") or 0)
     ttl = _ttl_seconds()
-    if cached_at + ttl < now_ts:
-        _safe_unlink(path)
-        return None
+    is_stale = cached_at + ttl < now_ts
 
     try:
         return CachedFetch(
@@ -159,11 +279,14 @@ def get(url: str, *, now: float | None = None) -> CachedFetch | None:
             extractor=raw.get("extractor"),
             source_selector=raw.get("source_selector"),
             source_xpath=raw.get("source_xpath"),
-        )
+            etag=raw.get("etag"),
+            last_modified=raw.get("last_modified"),
+            content_hash=raw.get("content_hash") or content_hash(str(raw["markdown"])),
+        ), is_stale
     except (KeyError, TypeError, ValueError) as e:
         logger.debug("fetch_cache: record missing fields at %s: %s", path, e)
         _safe_unlink(path)
-        return None
+        return None, False
 
 
 def put(entry: CachedFetch) -> None:
@@ -178,6 +301,8 @@ def put(entry: CachedFetch) -> None:
         logger.warning("fetch_cache: cannot create %s: %s", cache_dir, e)
         return
 
+    if not entry.content_hash:
+        entry = replace(entry, content_hash=content_hash(entry.markdown))
     payload = asdict(entry)
     payload["schema"] = SCHEMA_VERSION
 
@@ -221,6 +346,16 @@ def _safe_unlink(path: Path) -> None:
         path.unlink(missing_ok=True)
     except OSError as e:
         logger.debug("fetch_cache: unlink %s failed: %s", path, e)
+
+
+def _header(headers: object, name: str) -> str | None:
+    try:
+        value = headers.get(name)  # type: ignore[attr-defined]
+    except AttributeError:
+        return None
+    if value is None:
+        return None
+    return str(value)
 
 
 def _trim_if_over_cap() -> None:

@@ -70,4 +70,7 @@ def fetch(url: str, *, backend: str = pdf_backends.DEFAULT_BACKEND) -> FetchResu
         raw_html="",
         fetcher="pdf",
         elapsed_ms=int((time.monotonic() - t0) * 1000),
+        content_type=r.headers.get("content-type"),
+        etag=r.headers.get("etag"),
+        last_modified=r.headers.get("last-modified"),
     )

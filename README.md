@@ -109,7 +109,12 @@ benchmark locally to regenerate.
   `TRAWL_PASSTHROUGH_MAX_BYTES` (default 256 KB). No embedding, no
   query required.
 - **bge-m3 dense retrieval** with an OpenAI-compatible embedding
-  endpoint. Adaptive top-k based on page size.
+  endpoint. Adaptive top-k based on page size. If the embedding
+  endpoint is unavailable, trawl falls back to BM25 lexical ranking
+  and returns a warning in the result payload instead of failing the
+  entire fetch. This degraded mode is meant for operational
+  continuity; quality is best with the bge-m3 embedding service
+  running.
 - **Cross-encoder reranking** (bge-reranker-v2-m3) on the top 2×
   candidates. Falls back gracefully to cosine-only if the reranker
   server is down.
@@ -182,20 +187,28 @@ mamba env create -f environment.yml    # creates `trawl` env with deps
 mamba run -n trawl playwright install chromium
 ```
 
-Or with pip/venv if you prefer:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-playwright install chromium
-```
-
 Copy `.env.example` → `.env` if you need to override any default
 endpoints; every variable is optional.
 
-All commands below assume you're inside the env — either activate it
-(`mamba activate trawl`) or prefix with `mamba run -n trawl`.
+All commands below assume the `trawl` mamba environment: either activate
+it with `mamba activate trawl` or prefix commands with
+`mamba run -n trawl`.
+
+### Runtime health check
+
+Use `trawl-doctor` to check the local runtime before wiring trawl into
+an MCP client:
+
+```bash
+trawl-doctor
+# or
+python -m trawl.diagnostics --json
+```
+
+The doctor checks Python, Playwright Chromium, cache-path writability,
+the embedding endpoint, the optional reranker endpoint, and optional
+VLM profile configuration. Embedding is required for dense retrieval;
+reranker and VLM are optional.
 
 ## Usage
 
@@ -235,10 +248,11 @@ The server exposes two tools:
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `url` | string | yes | — | Target URL. `.pdf` URLs or URLs containing `/pdf/` route through the PDF path |
-| `query` | string | no | — | The user's question/topic. Required when no cached profile exists |
+| `query` | string | no | — | The user's question/topic. Required when no cached profile exists, unless `auto_profile=true` is used |
 | `k` | integer | no | adaptive | Override top-k. Default is adaptive (5–12) by chunk count |
 | `use_hyde` | boolean | no | `false` | Expand the query via a hypothetical answer before embedding. Rarely helpful; costs ~15–20s |
 | `use_rerank` | boolean | no | `true` | Cross-encoder reranking via bge-reranker-v2-m3. ~0.5–2s extra latency |
+| `auto_profile` | boolean | no | `false` | For queryless HTML fetches with no usable profile, generate a VLM profile first and retry via the profile fast path. Requires `TRAWL_VLM_URL`; adds profile-page latency |
 
 Returns a JSON blob as `TextContent`:
 
@@ -249,6 +263,7 @@ Returns a JSON blob as `TextContent`:
   "fetcher": "playwright+trafilatura",
   "ok": true,
   "error": null,
+  "warnings": [],
   "page_chars": 55423,
   "output_chars": 3453,
   "compression_ratio": 16.1,
@@ -260,6 +275,14 @@ Returns a JSON blob as `TextContent`:
   ]
 }
 ```
+
+MCP `fetch_page` separates browser-free work from browser work. URLs
+that can use raw passthrough, direct PDF fetching, or a native API
+fetcher start on a small general thread pool. Playwright-rendered pages,
+cached-profile fetches, host-profile transfer, and `profile_page` stay
+on one browser thread to avoid sync-Playwright greenlet thread switches.
+If a native API fetcher discovers it needs a browser fallback, the MCP
+handler retries that call on the browser thread.
 
 **`profile_page`** — VLM-driven page profiling. Takes a screenshot,
 asks a vision LLM to identify the main-content region, and caches the
@@ -299,6 +322,14 @@ expects the filename you passed to `-m`). Complete list in
 | `TRAWL_CONTEXTUAL_RETRIEVAL` | `0` | `0` disables contextual retrieval, `1` forces deterministic page/section context for dense and BM25 retrieval inputs, and `auto` enables it for identifier/code-heavy queries, large pages, and repeated-record pages. Output chunks are unchanged. |
 | `TRAWL_CONTEXT_PREFIX_MAX_CHARS` | `320` | Maximum characters of contextual prefix per chunk before the chunk body is appended. |
 | `TRAWL_CONTEXT_PREFIX_VERSION` | `deterministic-v1` | Prefix version string used for contextual embedding cache invalidation. |
+| `TRAWL_MCP_GENERAL_WORKERS` | `4` | Worker count for MCP browser-free `fetch_page` routes. Browser/profile routes remain pinned to one Playwright-safe worker. |
+| `TRAWL_FETCH_CACHE_TTL` | `300` | Per-URL fetch cache TTL in seconds. `0` disables the fetch cache. |
+| `TRAWL_FETCH_CACHE_PATH` | `~/.cache/trawl/fetches` | Directory for cached successful HTML/PDF/API fetch output. |
+| `TRAWL_FETCH_CACHE_MAX_MB` | `100` | Soft size cap for the fetch cache; old entries are trimmed by mtime. |
+| `TRAWL_FETCH_CACHE_REVALIDATE_TIMEOUT` | `10` | Conditional revalidation timeout for stale records with `ETag`/`Last-Modified`. |
+| `TRAWL_SCRAPLING_FALLBACK` | `0` | Enable optional Scrapling fallback after Playwright fails or returns unusable/anti-bot content. Requires `.[scrapling]`. |
+| `TRAWL_SCRAPLING_MODE` | `auto` | Scrapling mode: `auto`, `dynamic`, or `stealthy`. `auto` uses stealthy only for anti-bot-looking failures. |
+| `TRAWL_SCRAPLING_TIMEOUT_MS` | `30000` | Scrapling fallback timeout in milliseconds. |
 | `TRAWL_VLM_URL` | `http://localhost:8080/v1` | Vision LLM for page profiling |
 | `TRAWL_VLM_MODEL` | `gemma` | Vision model name |
 | `TRAWL_VLM_TIMEOUT` | `120` | VLM request timeout (seconds) |
@@ -314,6 +345,79 @@ expects the filename you passed to `-m`). Complete list in
 > **Slot pinning**: on shared servers with prompt caching enabled,
 > set `TRAWL_VLM_SLOT` / `TRAWL_HYDE_SLOT` to a slot ID integer to
 > avoid evicting other consumers' KV cache.
+
+For repeated queries over the same pages, consider enabling the
+document embedding cache:
+
+```bash
+export TRAWL_EMBED_CACHE_TTL=86400
+```
+
+The cache key includes model, endpoint, contextual-retrieval
+mode/version, and a hash of the text, so content changes naturally
+miss the cache.
+
+The per-fetch cache stores successful fetch output plus optional
+`ETag`, `Last-Modified`, and content-hash metadata. When a cached record
+is stale and has validators, trawl sends a conditional request: `304`
+refreshes the cache timestamp and reuses the stored markdown, while
+`200` or missing validators falls through to a normal fresh fetch.
+
+For harder protected or JavaScript-heavy pages, Scrapling can be enabled
+as a recovery-only HTML supplier:
+
+```bash
+pip install -e '.[scrapling]'
+export TRAWL_SCRAPLING_FALLBACK=1
+```
+
+This does not change the default install. trawl still uses its existing
+API/PDF/passthrough/Playwright routes first, and then runs its own
+extraction, chunking, retrieval, and reranking on Scrapling-supplied HTML.
+
+To measure cold versus warm repeated retrieval with the reader-comparison
+benchmark:
+
+```bash
+mamba run -n trawl python benchmarks/reader_comparison.py \
+  --provider trawl \
+  --repeat 2 \
+  --warm-repeat-embed-cache-ttl 86400
+```
+
+The generated report and CSV include cold/warm phase, retrieval latency,
+fetch cache hit, chunk budget count, and document embedding cache hit/miss
+counters for `trawl` rows. For a strict cold first pass, point
+`TRAWL_EMBED_CACHE_PATH` at an empty directory before running.
+
+To re-measure retrieval modes under the same cache setting:
+
+```bash
+mamba run -n trawl python benchmarks/reader_comparison.py \
+  --provider trawl \
+  --repeat 2 \
+  --warm-repeat-embed-cache-ttl 86400 \
+  --retrieval-mode dense \
+  --retrieval-mode hybrid \
+  --retrieval-mode contextual-auto \
+  --retrieval-mode contextual-forced
+```
+
+Retrieval-mode runs set `TRAWL_HYBRID_RETRIEVAL` and
+`TRAWL_CONTEXTUAL_RETRIEVAL` only around each `trawl` benchmark call. The
+report compares each mode to dense by case/repeat, including
+query type, flipped-to-fail count, first-fact rank movement, retrieval
+p50/p95, output tokens, contextual-use flags, and the embedding-cache TTL
+used for the run.
+Default retrieval settings stay unchanged unless a measured run has zero
+flipped-to-fail rows and retrieval p95 grows by no more than 20%.
+
+Optional reader-comparison providers:
+
+- Firecrawl: set `FIRECRAWL_API_KEY`; unavailable credentials produce
+  skipped rows.
+- Crawl4AI: install the optional package in your environment; unavailable
+  imports produce skipped rows.
 
 ## Testing
 

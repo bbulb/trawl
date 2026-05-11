@@ -58,10 +58,13 @@ def _build_event(result: PipelineResult) -> dict:
         "page_chars": result.page_chars,
         "n_chunks_total": result.n_chunks_total,
         "n_chunks_embedded": result.n_chunks_embedded,
+        "embed_cache_hits": result.embed_cache_hits,
+        "embed_cache_misses": result.embed_cache_misses,
         "contextual_retrieval_used": result.contextual_retrieval_used,
         "context_prefix_chars_total": result.context_prefix_chars_total,
         "context_prefix_chars_avg": result.context_prefix_chars_avg,
         "error": result.error,
+        "warnings": list(result.warnings),
     }
     diagnostics = result.retrieval_diagnostics or {}
     if diagnostics:

@@ -148,6 +148,112 @@ def test_expired_entry_triggers_refetch(fake_fetcher, fake_retrieval, no_profile
     assert got.markdown.startswith("# Cached Page")
 
 
+def test_expired_entry_revalidated_304_reuses_cache(
+    fake_fetcher, fake_retrieval, no_profile, monkeypatch
+):
+    url = "https://example.com/revalidated"
+    fetch_cache.put(
+        fetch_cache.CachedFetch(
+            url=url,
+            markdown="# stale but valid\n\nbody body body",
+            page_title="stale but valid",
+            fetcher_used="playwright+trafilatura",
+            content_type="text/html",
+            cached_at=time.time() - 10_000,
+            fetch_elapsed_ms=1000,
+            etag='"old"',
+            last_modified="Mon, 04 May 2026 00:00:00 GMT",
+        )
+    )
+
+    def fake_revalidate(entry, *, now=None):
+        assert entry.etag == '"old"'
+        refreshed = fetch_cache.CachedFetch(
+            url=entry.url,
+            markdown=entry.markdown,
+            page_title=entry.page_title,
+            fetcher_used=entry.fetcher_used,
+            content_type=entry.content_type,
+            cached_at=time.time(),
+            fetch_elapsed_ms=entry.fetch_elapsed_ms,
+            extractor=entry.extractor,
+            source_selector=entry.source_selector,
+            source_xpath=entry.source_xpath,
+            etag='"same"',
+            last_modified=entry.last_modified,
+        )
+        fetch_cache.put(refreshed)
+        return fetch_cache.RevalidationResult(status="not_modified", elapsed_ms=3, etag='"same"')
+
+    monkeypatch.setattr(fetch_cache, "revalidate", fake_revalidate)
+
+    r = pipeline.fetch_relevant(url, "q")
+
+    assert r.cache_hit is True
+    assert r.page_title == "stale but valid"
+    assert len(fake_fetcher) == 0
+    refreshed = fetch_cache.get(url)
+    assert refreshed is not None
+    assert refreshed.etag == '"same"'
+
+
+def test_expired_entry_revalidated_200_triggers_fresh_fetch(
+    fake_fetcher, fake_retrieval, no_profile, monkeypatch
+):
+    url = "https://example.com/modified"
+    fetch_cache.put(
+        fetch_cache.CachedFetch(
+            url=url,
+            markdown="# stale\n\nstale body",
+            page_title="stale",
+            fetcher_used="playwright+trafilatura",
+            content_type="text/html",
+            cached_at=time.time() - 10_000,
+            fetch_elapsed_ms=1000,
+            etag='"old"',
+        )
+    )
+
+    def fake_revalidate(entry, *, now=None):
+        assert entry.etag == '"old"'
+        return fetch_cache.RevalidationResult(status="modified", elapsed_ms=3, etag='"new"')
+
+    monkeypatch.setattr(fetch_cache, "revalidate", fake_revalidate)
+
+    r = pipeline.fetch_relevant(url, "q")
+
+    assert r.cache_hit is False
+    assert len(fake_fetcher) == 1
+    got = fetch_cache.get(url)
+    assert got is not None
+    assert got.markdown.startswith("# Cached Page")
+
+
+def test_expired_entry_without_validators_triggers_fresh_fetch(
+    fake_fetcher, fake_retrieval, no_profile
+):
+    url = "https://example.com/no-validators"
+    fetch_cache.put(
+        fetch_cache.CachedFetch(
+            url=url,
+            markdown="# stale\n\nstale body",
+            page_title="stale",
+            fetcher_used="playwright+trafilatura",
+            content_type="text/html",
+            cached_at=time.time() - 10_000,
+            fetch_elapsed_ms=1000,
+        )
+    )
+
+    r = pipeline.fetch_relevant(url, "q")
+
+    assert r.cache_hit is False
+    assert len(fake_fetcher) == 1
+    got = fetch_cache.get(url)
+    assert got is not None
+    assert got.markdown.startswith("# Cached Page")
+
+
 def test_different_queries_share_cached_fetch(fake_fetcher, fake_retrieval, no_profile):
     """Cache is keyed by URL only — different queries hit the same entry."""
     url = "https://example.com/shared"

@@ -32,6 +32,10 @@ def test_retrieve_reuses_cached_document_embedding(monkeypatch, tmp_path):
     assert second.error is None
     assert calls == [["alpha query"], ["alpha body"], ["alpha query"]]
     assert second.scored[0].chunk is chunks[0]
+    assert first.embed_cache_hits == 0
+    assert first.embed_cache_misses == 1
+    assert second.embed_cache_hits == 1
+    assert second.embed_cache_misses == 0
 
 
 def test_contextual_mode_invalidates_document_embedding_cache(monkeypatch, tmp_path):
@@ -76,7 +80,9 @@ def test_embedding_cache_disabled_keeps_current_embedding_calls(monkeypatch, tmp
 
     monkeypatch.setattr(retrieval, "_embed_batch", _fake_embed)
 
-    retrieval.retrieve("alpha query", chunks, k=1)
+    result = retrieval.retrieve("alpha query", chunks, k=1)
     retrieval.retrieve("alpha query", chunks, k=1)
 
     assert calls == [["alpha query"], ["alpha body"], ["alpha query"], ["alpha body"]]
+    assert result.embed_cache_hits == 0
+    assert result.embed_cache_misses == 0

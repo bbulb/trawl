@@ -26,6 +26,7 @@ from .playwright import FetchResult, make_error_result
 logger = logging.getLogger(__name__)
 
 _WIKI_HOST_RE = re.compile(r"^([a-z]{2,3})(?:\.m)?\.wikipedia\.org$")
+_BROWSER_FALLBACK_REQUIRED = "browser fallback required"
 _SPECIAL_PREFIXES = (
     "Special:",
     "Wikipedia:",
@@ -68,7 +69,11 @@ def _parse_wikipedia_url(url: str) -> tuple[str, str] | None:
     return (lang, title)
 
 
-def fetch(url: str) -> FetchResult:
+def _browser_fallback_result(url: str, t0: float, reason: str) -> FetchResult:
+    return make_error_result(url, "wikipedia", t0, f"{_BROWSER_FALLBACK_REQUIRED}: {reason}")
+
+
+def fetch(url: str, *, allow_browser_fallback: bool = True) -> FetchResult:
     """Fetch a Wikipedia article via the MediaWiki parse API.
 
     Returns the article HTML converted to markdown using the existing
@@ -109,16 +114,22 @@ def fetch(url: str) -> FetchResult:
                 title,
                 data["error"].get("info", ""),
             )
-            return pw.fetch(url)
+            if allow_browser_fallback:
+                return pw.fetch(url)
+            return _browser_fallback_result(url, t0, "MediaWiki API returned an error")
 
         html = data.get("parse", {}).get("text", {}).get("*", "")
         if not html:
             logger.info("empty HTML from MediaWiki API for %s/%s", lang, title)
-            return pw.fetch(url)
+            if allow_browser_fallback:
+                return pw.fetch(url)
+            return _browser_fallback_result(url, t0, "empty HTML from MediaWiki API")
 
         markdown = extraction.html_to_markdown(html)
         if not markdown:
-            return pw.fetch(url)
+            if allow_browser_fallback:
+                return pw.fetch(url)
+            return _browser_fallback_result(url, t0, "empty markdown after MediaWiki extraction")
 
         return FetchResult(
             url=url,
@@ -137,4 +148,6 @@ def fetch(url: str) -> FetchResult:
             e,
         )
 
-    return pw.fetch(url)
+    if allow_browser_fallback:
+        return pw.fetch(url)
+    return _browser_fallback_result(url, t0, "MediaWiki API failed")
