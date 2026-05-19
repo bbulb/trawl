@@ -5,6 +5,21 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_embed_cache(monkeypatch, tmp_path):
+    """Isolate the document embedding cache per test.
+
+    With the default-on `TRAWL_EMBED_CACHE_TTL=3600`, tests that share
+    chunk texts (e.g. the chunk-budget suite's `doc N alpha` fixtures)
+    can otherwise leak cached embeddings across tests via the user's
+    real `~/.cache/trawl/embeddings/` directory. Tests that exercise
+    specific cache behaviour override `TRAWL_EMBED_CACHE_PATH` /
+    `TRAWL_EMBED_CACHE_TTL` themselves after this fixture runs.
+    """
+
+    monkeypatch.setenv("TRAWL_EMBED_CACHE_PATH", str(tmp_path / "_embed_cache"))
+
+
 @pytest.fixture
 def make_profile():
     """Factory fixture — returns a callable that builds a minimal valid Profile.

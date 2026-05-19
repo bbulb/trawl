@@ -8,8 +8,8 @@ import time
 from trawl import embedding_cache
 
 
-def test_disabled_by_default(monkeypatch, tmp_path):
-    monkeypatch.delenv("TRAWL_EMBED_CACHE_TTL", raising=False)
+def test_disabled_when_ttl_zero(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAWL_EMBED_CACHE_TTL", "0")
     monkeypatch.setenv("TRAWL_EMBED_CACHE_PATH", str(tmp_path))
 
     key = embedding_cache.CacheKey(
@@ -23,6 +23,23 @@ def test_disabled_by_default(monkeypatch, tmp_path):
 
     embedding_cache.put(key, [1.0, 0.0])
     assert embedding_cache.get(key) is None
+
+
+def test_enabled_by_default(monkeypatch, tmp_path):
+    monkeypatch.delenv("TRAWL_EMBED_CACHE_TTL", raising=False)
+    monkeypatch.setenv("TRAWL_EMBED_CACHE_PATH", str(tmp_path))
+
+    key = embedding_cache.CacheKey(
+        model="bge-m3",
+        base_url="http://localhost:8081/v1",
+        text="hello",
+        contextual_mode="off",
+        prefix_max_chars=320,
+        prefix_version="deterministic-v1",
+    )
+
+    embedding_cache.put(key, [1.0, 0.0], now=1000.0)
+    assert embedding_cache.get(key, now=1500.0) == [1.0, 0.0]
 
 
 def test_put_get_roundtrip(monkeypatch, tmp_path):

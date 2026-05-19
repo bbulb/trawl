@@ -7,7 +7,25 @@ not yet follow semver strictly — expect breaking changes before
 
 ## [Unreleased]
 
-_No changes yet._
+### Changed
+
+- **`TRAWL_EMBED_CACHE_TTL` default flipped from `0` (disabled) to
+  `3600` (1 hour, enabled)** — roadmap Spike B
+  (`docs/superpowers/plans/2026-05-18-trawl-improvement-roadmap.md`
+  step #3). Single-line change in `src/trawl/embedding_cache.py`
+  (`DEFAULT_TTL_SECONDS`). Pre-registered gate: cold retrieval p95
+  within +10% of prior TTL=0 baseline; warm retrieval p95 reduction
+  ≥ 80%; disk usage ≤ `TRAWL_EMBED_CACHE_MAX_MB=512` cap; cache key
+  fields unchanged so existing on-disk caches keep hitting. Measured
+  on 6 reader-comparison URLs (`benchmarks/results/embed-cache-default-on/20260519-014510Z/`):
+  cold avg retrieval **1503 ms** (vs prior 2026-05-04 dense baseline
+  1445 ms, +4%) → warm avg **57 ms** (**−96.2%**), disk 9.4 MB / 401
+  files (1.8% of cap), 100 % embed-cache hit rate on warm phase.
+  Full pytest 414/414. Parity unchanged at 13/15 (`korean_wiki_person`
+  + `hada_news` are pre-existing content-drift flakes since 2026-04-22,
+  identical fail under TTL=0 and TTL=3600). Opt out via
+  `TRAWL_EMBED_CACHE_TTL=0`. Design doc:
+  `docs/superpowers/specs/2026-05-18-embed-cache-default-on-design.md`.
 
 ## [0.4.4] — 2026-04-22
 

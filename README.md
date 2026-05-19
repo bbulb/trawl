@@ -311,7 +311,7 @@ expects the filename you passed to `-m`). Complete list in
 |---|---|---|
 | `TRAWL_EMBED_URL` | `http://localhost:8081/v1` | bge-m3 embedding endpoint |
 | `TRAWL_EMBED_MODEL` | `bge-m3-Q8_0.gguf` | Embedding model name |
-| `TRAWL_EMBED_CACHE_TTL` | `0` | Document embedding cache TTL in seconds. `0` disables the cache. |
+| `TRAWL_EMBED_CACHE_TTL` | `3600` | Document embedding cache TTL in seconds. `0` disables the cache. |
 | `TRAWL_EMBED_CACHE_PATH` | `~/.cache/trawl/embeddings` | Directory for cached document embedding vectors. |
 | `TRAWL_EMBED_CACHE_MAX_MB` | `512` | Soft size cap for the embedding cache; old entries are trimmed by mtime. |
 | `TRAWL_RERANK_URL` | `http://localhost:8083/v1` | bge-reranker-v2-m3 endpoint |
@@ -346,11 +346,19 @@ expects the filename you passed to `-m`). Complete list in
 > set `TRAWL_VLM_SLOT` / `TRAWL_HYDE_SLOT` to a slot ID integer to
 > avoid evicting other consumers' KV cache.
 
-For repeated queries over the same pages, consider enabling the
-document embedding cache:
+The document embedding cache is on by default with a 1-hour TTL.
+Disk usage is capped by `TRAWL_EMBED_CACHE_MAX_MB` (default 512 MB)
+with LRU trimming. To extend the window across a longer agent
+session:
 
 ```bash
 export TRAWL_EMBED_CACHE_TTL=86400
+```
+
+To disable entirely:
+
+```bash
+export TRAWL_EMBED_CACHE_TTL=0
 ```
 
 The cache key includes model, endpoint, contextual-retrieval
