@@ -22,11 +22,12 @@ trawl directory. Humans should read `README.md` first, then
   `TRAWL_CHUNK_BUDGET` default flipped `0` → `100` (PR #46), closing
   curl.se manpage regression (p95 25149 → 3065 ms). Full list in
   `CHANGELOG.md`.
-- **Parity matrix**: 13/15 cases pass (`korean_wiki_person` +
-  `hada_news` are pre-existing content-drift flakes since 2026-04-22,
-  unrelated to recent code changes — verified at TTL=0 and TTL=3600).
+- **Parity matrix**: 15/15 cases pass (see `tests/test_cases.yaml`).
   `kbo_schedule` pinned to a historical game day to survive KBO
-  off-days.
+  off-days. `korean_wiki_person` + `hada_news` ground truth refreshed
+  on 2026-05-19 (PR #49) — synonym gap (added `무신`) and site
+  rebrand to GeekNews (replaced removed `points by`/`댓글` labels with
+  `GeekNews`/`topic?id`).
 - **Profile eval**: 36-site evaluation — 92% success rate, 16/36 IDEAL
   selectors.
 - **Benchmark vs Jina Reader**: ~23x fewer tokens on average across 12
