@@ -1,11 +1,11 @@
 # trawl 개선 로드맵 — 2026-05-18
 
 **작성일**: 2026-05-18
-**상태**: 대부분 완료 (2026-05-19 갱신). Spike A 만 외부 prereq 대기.
+**상태**: 모든 단계 종결 (2026-05-19 갱신). Spike A 측정 후 기각.
 **전제**: develop @ `7afbf97` (v0.4.4 back-merged). 4/22 핸드오프 이후 P0 stability foundations (commit `8d77f89`) 실행 완료. 본 로드맵은 남은 P1/P2 plan 4개 + 외부 도입 spike 2개를 단일 실행 큐로 묶는다.
 
 > **2026-05-19 상태 갱신**: 작성 시점에 baseline 을 `7afbf97`로 가정했지만, P0 commit `8d77f89` 이 **P1 Goal 1, Goal 2 + P2 Goal 3, Goal 4 의 코드도 함께 담고 있었음**이 확인됨. 따라서 실제 미실행 항목은:
-> - **Spike A (Qwen3-Embedding A/B)** — Qwen3 GGUF 다운로드 + llama-server 슬롯 재배치 필요, 외부 prereq 대기 중
+> - **Spike A (Qwen3-Embedding A/B)** — **기각** (2026-05-19). 4/5 게이트 실패 (parity 15→14, coding 24→23, Korean 3→2, p95 +89.9 %). 디자인 doc 의 "Outcome" 절 + `notes/qwen3-embedding-swap-outcome.md` 참조.
 > - **Spike B (TRAWL_EMBED_CACHE_TTL flip 0 → 3600)** — PR #48 (2026-05-19 머지, `b5464ad`) 완료. warm p95 −96.2 %.
 > - **Parity flake triage (`korean_wiki_person`, `hada_news`)** — Spike B 측정 중 발견, PR #49 (2026-05-19 머지, `0eeab72`) 로 해소. 15/15 복구.
 >
@@ -51,7 +51,7 @@ P1 Goal 1 이 모든 측정의 baseline 이라 **가장 먼저**. Spike A·B 는
 | # | 단계 | 상태 | 사전 조건 | 핵심 게이트 |
 |---|---|---|---|---|
 | 1 | P1 Goal 1: cache 관측 | **완료** — `8d77f89` (P0 commit 에 함께 포함) | — | parity 15/15, query/chunk 누출 0 |
-| 2 | Spike A: Qwen3-Embedding | **대기** — Qwen3 GGUF 다운로드 + llama-server 슬롯 재배치 필요 | GGUF 다운로드 | 5개 게이트 전부 |
+| 2 | Spike A: Qwen3-Embedding | **기각** — 측정 완료 (2026-05-19). 4/5 게이트 실패 | GGUF 다운로드 | 5개 게이트 전부 |
 | 3 | Spike B: cache TTL flip | **완료** — PR #48 `b5464ad` (2026-05-19) | #1 | warm p95 −80 % 이상 → **−96.2 %** |
 | 4 | P1 Goal 2: MCP queue | **완료** — `8d77f89` | #1 | passthrough blocking 0 |
 | 5 | P2 Goal 4: retrieval 재측정 | **완료** — `8d77f89` (`--retrieval-mode` 추가); 측정 `benchmarks/results/reader-comparison/retrieval-modes-cache-2026-05-04/` | #1, #3 | contextual gate +20 % 재검토 → 기각, 기본값 유지 |
@@ -75,7 +75,7 @@ P1 Goal 1 이 모든 측정의 baseline 이라 **가장 먼저**. Spike A·B 는
 
 ### 2. Spike A — Qwen3-Embedding-0.6B drop-in A/B
 
-**상태 (2026-05-19)**: **대기**. Qwen3 GGUF 다운로드 + llama-server 슬롯 재배치 (또는 추가 슬롯) 가 외부 prereq. 코드 변경은 단일 env override (`TRAWL_EMBED_URL` / `TRAWL_EMBED_MODEL`) 로 가능. 측정 시작 시 design doc 부터.
+**상태 (2026-05-19)**: **기각**. Qwen3-Embedding-0.6B-Q8_0 GGUF 를 `:8085` 에 side-by-side 로 serving 하고 5개 게이트 측정 완료. 결과: parity 15→14 (`korean_wiki_person`), coding 24→23 (`claude_code_arxiv_abs_attention`), Korean 3→2, 검색 p95 1838→3489 ms (+89.9 %). reader-comparison 만 Δ=+2 통과. 한국어 회귀 발생 즉시 기각 결정 매트릭스 적용. 상세: `docs/superpowers/specs/2026-05-18-qwen3-embedding-swap-design.md` § Outcome + `notes/qwen3-embedding-swap-outcome.md`.
 
 ```
 /goal Run a pre-registered A/B spike replacing the BGE-M3 dense embedding model with Qwen3-Embedding-0.6B-GGUF on llama-server :8081. First, author the design doc at docs/superpowers/specs/2026-05-18-qwen3-embedding-swap-design.md following the RRF-k spike pattern: hypothesis, alternative model card link (https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF), exact serving command (`llama-server --model qwen3-embedding-0.6b.gguf --embedding --pooling last --port 8081`), env override matrix (TRAWL_EMBED_URL / TRAWL_EMBED_MODEL), and the pre-registered gate table:
