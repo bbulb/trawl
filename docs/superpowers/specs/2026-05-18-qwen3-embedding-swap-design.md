@@ -7,6 +7,24 @@ refresh, 2026-05-19).
 Pre-registered roadmap step #2 in
 `docs/superpowers/plans/2026-05-18-trawl-improvement-roadmap.md`.
 
+## Outcome (2026-05-19): REJECT
+
+Measurement complete; 4 of 5 gates fail. BGE-M3 stays as default.
+Full breakdown lives in `notes/qwen3-embedding-swap-outcome.md`
+(gitignored). Gate table:
+
+| Gate | Result | Notes |
+|---|---|---|
+| 1. parity 15/15 | **FAIL** 14/15 | `korean_wiki_person` regressed |
+| 2. coding 24/24 | **FAIL** 23/24 | `claude_code_arxiv_abs_attention` regressed |
+| 3. reader-comp Δ ≥ +1 | PASS Δ=+2 (4→6) | flipped `github_fastapi_readme`, `wiki_large_language_model` to pass |
+| 4. Korean 3/3 | **FAIL** 2/3 | `korean_wiki_person`; project-differentiator gate |
+| 5. retrieval p95 ≤ baseline ×1.2 | **FAIL** +89.9 % (1837 → 3489 ms) | side-by-side serve, same llama.cpp build |
+
+Decision matrix entry "Korean regression (gate 4) → REJECT
+immediately" applied. No env default change, GGUF left in
+`~/models/qwen3-embedding/` for future retry.
+
 ## Hypothesis
 
 Qwen3-Embedding-0.6B-GGUF served on `llama-server :8081` can replace
