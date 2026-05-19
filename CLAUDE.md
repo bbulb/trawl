@@ -132,15 +132,25 @@ trawl directory. Humans should read `README.md` first, then
     observations accumulate, clamped to `[1500, 15000] ms`. New hosts
     use the static 5000 ms default. Stats in
     `~/.cache/trawl/host_stats.json`. Disable via `TRAWL_HOST_STATS=0`.
-  - **Hybrid dense + BM25 retrieval** (C6, **default off**, opt-in) —
-    `TRAWL_HYBRID_RETRIEVAL=1` enables BM25 lexical ranking alongside
-    dense cosine, fused via Reciprocal Rank Fusion (`k=60`). Tokenizer
-    is rule-based multilingual (Latin word / Hangul bigram / CJK char)
-    in `src/trawl/bm25.py`. Reranker window unchanged (2x candidates).
-    Baseline parity (15/15) preserved in both modes; RRF at k=60 was
-    conservative in the `code_heavy_query` A/B measurement (no content
-    regression, no assertion wins). Tune via `TRAWL_HYBRID_RRF_K`
-    (default 60). See `notes/c6-hybrid-measurement.md` for A/B results.
+  - **Hybrid dense + BM25 retrieval** (C6, **default on since
+    2026-05-19**, opt-out via `TRAWL_HYBRID_RETRIEVAL=0`) —
+    BM25 lexical ranking runs alongside dense cosine, fused via
+    Reciprocal Rank Fusion (`k=60`). Tokenizer is rule-based
+    multilingual (Latin word / Hangul bigram / CJK char) in
+    `src/trawl/bm25.py`. Reranker window unchanged (2x candidates).
+    Tune via `TRAWL_HYBRID_RRF_K` (default 60).
+    Initial C6 A/B (PR #29) on `code_heavy_query` was conservative
+    (no wins, no regression) — that conclusion holds for that
+    surface. The default flip is justified by a `reader_comparison`
+    A/B at 2026-05-19 (`hybrid_default_on_spike.py`) that PASSed
+    all 6 pre-registered gates after a companion wiki-fetcher
+    heading-preservation fix: reader-comp hybrid 6/6 vs dense 5/6
+    (`wiki_large_language_model` saved by BM25 fusion), parity 15/15
+    + coding 24/24 in both modes, Korean 3/3, code_heavy_query
+    regression 0, retrieval p95 +1.3%. See
+    `notes/c6-hybrid-measurement.md` (original C6) and
+    `notes/hybrid-default-on-spike-outcome.md` (default-flip
+    measurement).
   - **Chunk budget prefilter** (longform follow-up, **default on since
     2026-04-22**, opt-out via `TRAWL_CHUNK_BUDGET=0`) —
     `TRAWL_CHUNK_BUDGET=100` is the default; any positive int caps the

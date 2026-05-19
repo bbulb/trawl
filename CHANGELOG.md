@@ -7,7 +7,43 @@ not yet follow semver strictly — expect breaking changes before
 
 ## [Unreleased]
 
+### Fixed
+
+- **Wikipedia fetcher heading preservation** — modern MediaWiki HTML
+  (2024+) wraps each `<hN>` inside `<div class="mw-heading">` next to
+  a `<span class="mw-editsection">` (the `[edit]` link). Trafilatura's
+  article-content detector treated the whole div as boilerplate and
+  dropped the heading text, leaving every chunk with empty
+  `heading=''`. On `이순신` (116 chunks, 47 H1-H6 in the source HTML)
+  this stripped all topical signal and made dense embedding rank
+  biographical chunks ahead of achievement chunks for a biographical
+  query, breaking `korean_wiki_person` parity assertion
+  `must_contain_any_2: [한산도, 노량, 명량, 임진왜란, 옥포]`. Fix:
+  `src/trawl/fetchers/wikipedia.py` now decomposes
+  `<span class="mw-editsection">` and replaces each `<hN>X</hN>`
+  with `<p>#N X</p>` before calling `extraction.html_to_markdown`,
+  so Trafilatura keeps the heading text as content and
+  `chunk_markdown` recognises the markdown prefix. Parity 15/15
+  recovered with reranker on; coding shard 24/24 preserved.
+
 ### Changed
+
+- **`TRAWL_HYBRID_RETRIEVAL` default flipped from `0` (opt-in) to
+  `1` (default on)** — BM25 lexical ranking now runs alongside dense
+  cosine by default, fused via RRF (`k=60`, unchanged). Driven by a
+  pre-registered 6-gate spike on 2026-05-19
+  (`benchmarks/hybrid_default_on_spike.py`, summary in
+  `benchmarks/results/hybrid-default-on-spike/20260519T054739Z-post-wiki-fix/`).
+  Gates: reader-comparison 6/6 hybrid + `flipped_to_fail=0` (dense
+  alone is 5/6 — `wiki_large_language_model` is saved by BM25
+  fusion); parity 15/15 in both modes; coding shard 24/24 in both
+  modes; `code_heavy_query` category regression 0 (preserves C6's
+  original surface); Korean 3/3 in both modes; retrieval p95 +1.3%
+  (well under the +20% gate). The flip lands together with the
+  wiki-fetcher heading-preservation fix above — the wiki fix
+  established the clean 15/15 baseline that made the spike
+  decidable. Opt out via `TRAWL_HYBRID_RETRIEVAL=0`. CLAUDE.md
+  "Hybrid dense + BM25 retrieval" section updated.
 
 - **`TRAWL_EMBED_CACHE_TTL` default flipped from `0` (disabled) to
   `3600` (1 hour, enabled)** — roadmap Spike B
