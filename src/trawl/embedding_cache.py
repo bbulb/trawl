@@ -14,7 +14,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
-DEFAULT_TTL_SECONDS = 0
+DEFAULT_TTL_SECONDS = 3600
 DEFAULT_MAX_MB = 512
 DEFAULT_CACHE_DIR = "~/.cache/trawl/embeddings"
 TRIM_HEADROOM_FRACTION = 0.20

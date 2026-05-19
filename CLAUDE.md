@@ -12,17 +12,19 @@ trawl directory. Humans should read `README.md` first, then
 
 ## Current status
 
-- **Version**: 0.4.4 (2026-04-22). Highlights since `v0.4.3`:
-  `TRAWL_CHUNK_BUDGET` default flipped from `0` (disabled) to `100`
-  (BM25 prefilter on) (PR #46) — closes future-work item #4 from the
-  longform-retrieval-cost design and resolves the
-  `claude_code_man_curl_options` curl.se manpage latency regression
-  (p95 25149 → 3065 ms, 88 %). Also ships the CJK per-doc cap
-  validation spike (PR #45, research-only). Previously shipped in
-  0.4.3: per-document char cap on the reranker payload
-  (`TRAWL_RERANK_MAX_PER_DOC_CHARS=1500` default, PR #43). Full list
-  in `CHANGELOG.md`.
-- **Parity matrix**: 15/15 cases pass (see `tests/test_cases.yaml`).
+- **Version**: 0.4.4 (2026-04-22). Unreleased on `develop` since:
+  `TRAWL_EMBED_CACHE_TTL` default flipped from `0` (disabled) to
+  `3600` (1 hour) (roadmap Spike B, 2026-05-19). Cold retrieval p95
+  within +4% of prior baseline; warm retrieval p95 **−96.2%** (1503
+  → 57 ms avg on the 6 reader-comparison URLs). Disk usage 9.4 MB
+  per URL set, capped at `TRAWL_EMBED_CACHE_MAX_MB=512`. Opt out via
+  `TRAWL_EMBED_CACHE_TTL=0`. Prior highlight (v0.4.4 itself):
+  `TRAWL_CHUNK_BUDGET` default flipped `0` → `100` (PR #46), closing
+  curl.se manpage regression (p95 25149 → 3065 ms). Full list in
+  `CHANGELOG.md`.
+- **Parity matrix**: 13/15 cases pass (`korean_wiki_person` +
+  `hada_news` are pre-existing content-drift flakes since 2026-04-22,
+  unrelated to recent code changes — verified at TTL=0 and TTL=3600).
   `kbo_schedule` pinned to a historical game day to survive KBO
   off-days.
 - **Profile eval**: 36-site evaluation — 92% success rate, 16/36 IDEAL
@@ -110,6 +112,20 @@ trawl directory. Humans should read `README.md` first, then
     Disable via `TRAWL_FETCH_CACHE_TTL=0`; relocate via
     `TRAWL_FETCH_CACHE_PATH`; size cap via `TRAWL_FETCH_CACHE_MAX_MB`
     (default 100). `PipelineResult.cache_hit` flags the reuse.
+  - **Document embedding cache** (**default on since 2026-05-19**,
+    opt-out via `TRAWL_EMBED_CACHE_TTL=0`) — successful chunk
+    embeddings are cached in `~/.cache/trawl/embeddings/<sha256>.json`
+    for `TRAWL_EMBED_CACHE_TTL` seconds (default 3600). Cache key
+    partitions on model, base_url, text_sha256, contextual_mode,
+    `prefix_max_chars`, `prefix_version`, and `SCHEMA_VERSION` so
+    text edits / contextual on/off / model swaps all miss naturally.
+    Disk cap via `TRAWL_EMBED_CACHE_MAX_MB` (default 512 MB) with LRU
+    trim at 20 % headroom; relocate via `TRAWL_EMBED_CACHE_PATH`.
+    `PipelineResult.embed_cache_hits` / `embed_cache_misses` and the
+    opt-in telemetry JSONL surface per-call counters. Warm-repeat
+    measurement on 6 reader-comparison URLs: cold avg retrieval 1503
+    ms → warm 57 ms (−96.2 %). See
+    `docs/superpowers/specs/2026-05-18-embed-cache-default-on-design.md`.
   - **Per-host adaptive ceiling** (C9, default on) — Playwright's
     content-ready wait ceiling becomes `p95(host) × 1.5` once 5
     observations accumulate, clamped to `[1500, 15000] ms`. New hosts
