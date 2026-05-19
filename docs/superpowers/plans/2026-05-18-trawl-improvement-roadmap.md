@@ -1,8 +1,15 @@
 # trawl 개선 로드맵 — 2026-05-18
 
 **작성일**: 2026-05-18
-**상태**: proposed
+**상태**: 대부분 완료 (2026-05-19 갱신). Spike A 만 외부 prereq 대기.
 **전제**: develop @ `7afbf97` (v0.4.4 back-merged). 4/22 핸드오프 이후 P0 stability foundations (commit `8d77f89`) 실행 완료. 본 로드맵은 남은 P1/P2 plan 4개 + 외부 도입 spike 2개를 단일 실행 큐로 묶는다.
+
+> **2026-05-19 상태 갱신**: 작성 시점에 baseline 을 `7afbf97`로 가정했지만, P0 commit `8d77f89` 이 **P1 Goal 1, Goal 2 + P2 Goal 3, Goal 4 의 코드도 함께 담고 있었음**이 확인됨. 따라서 실제 미실행 항목은:
+> - **Spike A (Qwen3-Embedding A/B)** — Qwen3 GGUF 다운로드 + llama-server 슬롯 재배치 필요, 외부 prereq 대기 중
+> - **Spike B (TRAWL_EMBED_CACHE_TTL flip 0 → 3600)** — PR #48 (2026-05-19 머지, `b5464ad`) 완료. warm p95 −96.2 %.
+> - **Parity flake triage (`korean_wiki_person`, `hada_news`)** — Spike B 측정 중 발견, PR #49 (2026-05-19 머지, `0eeab72`) 로 해소. 15/15 복구.
+>
+> Goal 1 / Goal 2 / Goal 3 / Goal 4 의 verification 은 본 문서 아래 "단계별 `/goal` 텍스트"의 각 항목 상태 표 참조.
 
 ## 목적
 
@@ -41,20 +48,23 @@ P1 Goal 1 이 모든 측정의 baseline 이라 **가장 먼저**. Spike A·B 는
 
 ## 한 화면 요약표
 
-| # | 단계 | 한국어 trigger | 사전 조건 | 핵심 게이트 |
+| # | 단계 | 상태 | 사전 조건 | 핵심 게이트 |
 |---|---|---|---|---|
-| 1 | P1 Goal 1: cache 관측 | `P1 Goal 1 진행해줘` | — | parity 15/15, query/chunk 누출 0 |
-| 2 | Spike A: Qwen3-Embedding | `Qwen3-Embedding swap spike 진행해줘` | GGUF 다운로드 | 5개 게이트 전부 |
-| 3 | Spike B: cache TTL flip | `embedding cache default-on spike 진행해줘` | #1 | warm p95 −80% 이상 |
-| 4 | P1 Goal 2: MCP queue | `P1 Goal 2 진행해줘` | #1 | passthrough blocking 0 |
-| 5 | P2 Goal 4: retrieval 재측정 | `P2 Goal 4 진행해줘` | #1, #3 | contextual gate +20% 재검토 |
-| 6 | P2 Goal 3: Scrapling | `P2 Goal 3 진행해줘` | — (마지막) | 기본 경로 회귀 0 |
+| 1 | P1 Goal 1: cache 관측 | **완료** — `8d77f89` (P0 commit 에 함께 포함) | — | parity 15/15, query/chunk 누출 0 |
+| 2 | Spike A: Qwen3-Embedding | **대기** — Qwen3 GGUF 다운로드 + llama-server 슬롯 재배치 필요 | GGUF 다운로드 | 5개 게이트 전부 |
+| 3 | Spike B: cache TTL flip | **완료** — PR #48 `b5464ad` (2026-05-19) | #1 | warm p95 −80 % 이상 → **−96.2 %** |
+| 4 | P1 Goal 2: MCP queue | **완료** — `8d77f89` | #1 | passthrough blocking 0 |
+| 5 | P2 Goal 4: retrieval 재측정 | **완료** — `8d77f89` (`--retrieval-mode` 추가); 측정 `benchmarks/results/reader-comparison/retrieval-modes-cache-2026-05-04/` | #1, #3 | contextual gate +20 % 재검토 → 기각, 기본값 유지 |
+| 6 | P2 Goal 3: Scrapling | **완료** — `8d77f89` (`src/trawl/fetchers/scrapling.py`, `TRAWL_SCRAPLING_FALLBACK=1`) | — | 기본 경로 회귀 0 |
+| — | Parity flake triage | **완료** — PR #49 `0eeab72` (2026-05-19) | Spike B 중 발견 | 15/15 복구 |
 
 ---
 
 ## 단계별 `/goal` 텍스트
 
 ### 1. P1 Goal 1 — embedding cache 관측 + reader-comparison provider adapter
+
+**상태 (2026-05-19)**: **완료**. `8d77f89`에 코드 포함. `RetrievalResult` / `PipelineResult.embed_cache_hits` / `embed_cache_misses`, telemetry JSONL 키, `benchmarks/reader_comparison.py` 의 `--repeat` + `--warm-repeat-embed-cache-ttl` + Firecrawl/Crawl4AI adapter 모두 develop 에 존재. 검증: `pytest tests/test_retrieval_embedding_cache.py tests/test_pipeline_embedding_cache_metrics.py tests/test_telemetry.py tests/test_reader_comparison.py -q` → 39 passed.
 
 ```
 /goal Implement the next P1 speed/observability slice for trawl using docs/stability-speed-improvement-report-2026-05-04.md and docs/superpowers/plans/2026-05-04-stability-speed-remaining-work.md. Add embedding cache hit/miss metadata through RetrievalResult, PipelineResult, telemetry, and reader-comparison output. Add a warm-repeat benchmark mode that can compare cold vs warm repeated queries with TRAWL_EMBED_CACHE_TTL=86400. Implement mocked Firecrawl and Crawl4AI reader-comparison adapters that skip cleanly when credentials/packages are unavailable. Update README/docs and verify with targeted tests plus `mamba run -n trawl python -m pytest`.
@@ -64,6 +74,8 @@ P1 Goal 1 이 모든 측정의 baseline 이라 **가장 먼저**. Spike A·B 는
 - **게이트**: parity 15/15 유지, ruff/pytest pass, telemetry 원본 query/chunk text 누출 0.
 
 ### 2. Spike A — Qwen3-Embedding-0.6B drop-in A/B
+
+**상태 (2026-05-19)**: **대기**. Qwen3 GGUF 다운로드 + llama-server 슬롯 재배치 (또는 추가 슬롯) 가 외부 prereq. 코드 변경은 단일 env override (`TRAWL_EMBED_URL` / `TRAWL_EMBED_MODEL`) 로 가능. 측정 시작 시 design doc 부터.
 
 ```
 /goal Run a pre-registered A/B spike replacing the BGE-M3 dense embedding model with Qwen3-Embedding-0.6B-GGUF on llama-server :8081. First, author the design doc at docs/superpowers/specs/2026-05-18-qwen3-embedding-swap-design.md following the RRF-k spike pattern: hypothesis, alternative model card link (https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF), exact serving command (`llama-server --model qwen3-embedding-0.6b.gguf --embedding --pooling last --port 8081`), env override matrix (TRAWL_EMBED_URL / TRAWL_EMBED_MODEL), and the pre-registered gate table:
@@ -80,6 +92,8 @@ Then run baseline (BGE-M3) and experiment (Qwen3) measurements through `benchmar
 
 ### 3. Spike B — `TRAWL_EMBED_CACHE_TTL` default 0 → 3600
 
+**상태 (2026-05-19)**: **완료**. PR #48 (`b5464ad`) 머지. 측정: cold p95 +4 % (gate +10 %), **warm p95 −96.2 %** (gate ≥ 80 %), 디스크 9.4 MB / 401 files (cap 512 MB 의 1.8 %), parity 15/15, full pytest 414. 디자인: `docs/superpowers/specs/2026-05-18-embed-cache-default-on-design.md`. 측정 artefacts (gitignored): `benchmarks/results/embed-cache-default-on/20260519-014510Z/`.
+
 ```
 /goal Run a pre-registered spike to flip TRAWL_EMBED_CACHE_TTL default from 0 (disabled) to 3600 (1 hour). First, author the design doc at docs/superpowers/specs/2026-05-18-embed-cache-default-on-design.md following the chunk-budget-default-on pattern: motivation (warm-repeat -96% latency in benchmarks/results/reader-comparison/retrieval-modes-cache-2026-05-04/), the one-line src/trawl/embedding_cache.py default change, opt-out env (`TRAWL_EMBED_CACHE_TTL=0`), disk usage bound (TRAWL_EMBED_CACHE_MAX_MB default 512, LRU evict), and the pre-registered gate:
   - `python tests/test_pipeline.py` stays 15/15
@@ -95,6 +109,8 @@ Then run cold/warm paired measurement via the warm-repeat mode added in P1 Goal 
 
 ### 4. P1 Goal 2 — MCP browser queue separation
 
+**상태 (2026-05-19)**: **완료**. `8d77f89`에 코드 포함. `src/trawl_mcp/server.py` 의 `_browser_executor` (single worker) + `_general_executor` (small pool) 분리, `fetch_relevant(..., allow_browser=False)` API, `tests/test_mcp_queue_separation.py` 동시성 테스트 모두 develop 에 존재.
+
 ```
 /goal Implement MCP/browser queue separation for trawl using docs/stability-speed-improvement-report-2026-05-04.md and docs/superpowers/plans/2026-05-04-stability-speed-remaining-work.md. Route browser-free fetch_page calls through a general executor while keeping Playwright/profile work on the single browser executor. Add concurrency tests showing passthrough/API/PDF-style calls are not blocked by one slow Playwright/profile call, preserve greenlet/thread safety, update docs, and verify with targeted tests plus `mamba run -n trawl python -m pytest`.
 ```
@@ -104,6 +120,8 @@ Then run cold/warm paired measurement via the warm-repeat mode added in P1 Goal 
 
 ### 5. P2 Goal 4 — cache-controlled hybrid/contextual 재측정
 
+**상태 (2026-05-19)**: **완료**. `8d77f89`에 코드 포함. `benchmarks/reader_comparison.py` 의 `--retrieval-mode dense|hybrid|contextual-auto|contextual-forced` 옵션, 모드별 env override, dense-baseline rank-movement annotation 모두 develop 에 존재. 2026-05-04 측정 결론: contextual-auto 전체 p95 +20.2 % / identifier +33.4 %, contextual-forced 전체 +20.8 % / identifier +33.9 % — gate 모두 넘어 **기각, `TRAWL_CONTEXTUAL_RETRIEVAL` 기본값 off 유지**. 측정 artefacts: `benchmarks/results/reader-comparison/retrieval-modes-cache-2026-05-04/`.
+
 ```
 /goal Implement cache-controlled hybrid/contextual retrieval re-measurement for trawl using docs/stability-speed-improvement-report-2026-05-04.md and docs/superpowers/plans/2026-05-04-stability-speed-remaining-work.md. Add benchmark/report support for dense, hybrid, contextual-auto, and contextual-forced modes; record flipped-to-fail, rank movement, retrieval p50/p95, and token output; do not change defaults unless gates pass; update docs and verify with targeted tests plus `mamba run -n trawl python -m pytest`.
 ```
@@ -112,6 +130,8 @@ Then run cold/warm paired measurement via the warm-repeat mode added in P1 Goal 
 - **게이트**: contextual-auto p95 +20% gate 통과 시 default-on 후보. 미통과 시 default off 유지 결정 commit.
 
 ### 6. P2 Goal 3 — Scrapling fallback trigger + HTTP cache revalidation
+
+**상태 (2026-05-19)**: **완료**. `8d77f89`에 코드 포함. `src/trawl/fetchers/scrapling.py` (lazy optional), `TRAWL_SCRAPLING_FALLBACK=1` 게이트, `TRAWL_SCRAPLING_MODE=auto|dynamic|stealthy` 옵션, `pyproject.toml` `[scrapling]` extra, fetch-cache `etag`/`last_modified`/`content_hash` revalidation, `tests/test_scrapling_fallback.py` + `tests/test_fetch_cache.py` mocked 304/200/stale 테스트 모두 develop 에 존재.
 
 ```
 /goal Implement the P2 fetch recovery slice for trawl using docs/stability-speed-improvement-report-2026-05-04.md and docs/superpowers/plans/2026-05-04-stability-speed-remaining-work.md. Add optional lazy Scrapling fallback behind TRAWL_SCRAPLING_FALLBACK=1, add HTTP cache revalidation fields and mocked 304/200/stale tests, keep default dependencies unchanged, update docs, and verify with targeted tests plus `mamba run -n trawl python -m pytest`.
