@@ -60,9 +60,7 @@ def test_main_no_network_passes_flag_to_checks(capsys):
 
     def fake_checks(include_network: bool):
         seen["include_network"] = include_network
-        return [
-            diagnostics.CheckResult("python", "ok", "Python runtime available", required=True)
-        ]
+        return [diagnostics.CheckResult("python", "ok", "Python runtime available", required=True)]
 
     code = diagnostics.main(["--no-network"], checks=fake_checks)
 

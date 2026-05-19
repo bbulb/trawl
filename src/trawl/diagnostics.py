@@ -237,8 +237,10 @@ def main(
     checks: Callable[[bool], list[CheckResult]] | None = None,
 ) -> int:
     args = parse_args(argv)
-    run = checks if checks is not None else lambda include_network: run_checks(
-        include_network=include_network
+    run = (
+        checks
+        if checks is not None
+        else lambda include_network: run_checks(include_network=include_network)
     )
     rows = run(not args.no_network)
     if args.json:
