@@ -210,7 +210,7 @@ def _evaluate_assertions(
             if actual != expected:
                 fails.append(f"path: expected {expected!r}, got {actual!r}")
         elif key == "fetcher_used":
-            actual = measurements.get("fetcher")
+            actual = measurements.get("fetcher_used")
             if actual != expected:
                 fails.append(f"fetcher_used: expected {expected!r}, got {actual!r}")
         elif key == "error_is_none":
