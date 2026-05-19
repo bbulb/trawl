@@ -60,7 +60,10 @@ def test_auto_disables_tiny_pages(monkeypatch):
     monkeypatch.setenv("TRAWL_CONTEXTUAL_RETRIEVAL", "auto")
     chunks = [_chunk("alpha"), _chunk("beta", index=1)]
 
-    assert contextual.should_use_contextual(query="simple question", chunks=chunks, page_title="") is False
+    assert (
+        contextual.should_use_contextual(query="simple question", chunks=chunks, page_title="")
+        is False
+    )
 
 
 def test_auto_enables_identifier_queries(monkeypatch):
@@ -81,14 +84,19 @@ def test_auto_enables_large_pages(monkeypatch):
     monkeypatch.setenv("TRAWL_CONTEXTUAL_RETRIEVAL", "auto")
     chunks = [_chunk("x", index=i) for i in range(16)]
 
-    assert contextual.should_use_contextual(query="concept query", chunks=chunks, page_title="Docs") is True
+    assert (
+        contextual.should_use_contextual(query="concept query", chunks=chunks, page_title="Docs")
+        is True
+    )
 
 
 def test_auto_enables_repeated_records(monkeypatch):
     monkeypatch.setenv("TRAWL_CONTEXTUAL_RETRIEVAL", "auto")
     chunks = [_chunk("x", index=0), _chunk("y", index=1, record_group_id=2)]
 
-    assert contextual.should_use_contextual(query="jobs", chunks=chunks, page_title="Listings") is True
+    assert (
+        contextual.should_use_contextual(query="jobs", chunks=chunks, page_title="Listings") is True
+    )
 
 
 def test_auto_disabled_when_prefix_cap_zero(monkeypatch):
@@ -96,4 +104,7 @@ def test_auto_disabled_when_prefix_cap_zero(monkeypatch):
     monkeypatch.setenv("TRAWL_CONTEXT_PREFIX_MAX_CHARS", "0")
     chunks = [_chunk("x", index=i) for i in range(16)]
 
-    assert contextual.should_use_contextual(query="asyncio.gather()", chunks=chunks, page_title="Docs") is False
+    assert (
+        contextual.should_use_contextual(query="asyncio.gather()", chunks=chunks, page_title="Docs")
+        is False
+    )

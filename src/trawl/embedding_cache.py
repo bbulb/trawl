@@ -163,8 +163,7 @@ def _trim_if_over_cap() -> None:
         return
     try:
         files = [
-            (path, path.stat().st_size, path.stat().st_mtime)
-            for path in cache_dir.glob("*.json")
+            (path, path.stat().st_size, path.stat().st_mtime) for path in cache_dir.glob("*.json")
         ]
     except OSError as e:
         logger.debug("embedding_cache: stat walk failed: %s", e)

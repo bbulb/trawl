@@ -129,8 +129,7 @@ def test_profile_retrieval_passes_context_texts_when_enabled(monkeypatch, make_p
     monkeypatch.setattr(pipeline, "PROFILE_DIRECT_CHUNK_THRESHOLD", 2)
     seen: dict[str, object] = {}
     markdown = "\n\n".join(
-        f"# Section {i}\n\nbody text for section {i} with enough words"
-        for i in range(4)
+        f"# Section {i}\n\nbody text for section {i} with enough words" for i in range(4)
     )
     profile = make_profile("https://example.com/profile-context")
 

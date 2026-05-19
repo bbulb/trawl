@@ -83,8 +83,12 @@ def test_key_changes_with_prefix_version():
         prefix_max_chars=320,
     )
 
-    v1 = embedding_cache.key_for(embedding_cache.CacheKey(prefix_version="deterministic-v1", **base))
-    v2 = embedding_cache.key_for(embedding_cache.CacheKey(prefix_version="deterministic-v2", **base))
+    v1 = embedding_cache.key_for(
+        embedding_cache.CacheKey(prefix_version="deterministic-v1", **base)
+    )
+    v2 = embedding_cache.key_for(
+        embedding_cache.CacheKey(prefix_version="deterministic-v2", **base)
+    )
 
     assert v1 != v2
 
