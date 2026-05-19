@@ -28,17 +28,16 @@ from trawl import bm25, chunking, retrieval
 from trawl.fetchers import stackexchange as se
 from trawl.pipeline import _adaptive_k, fetch_relevant
 
-
 CASES: list[dict[str, Any]] = [
     {
-        "id": "serverfault_378860",
-        "url": "https://serverfault.com/questions/378860/nginx-reverse-proxy-cookies",
+        "id": "serverfault_87056",
+        "url": "https://serverfault.com/questions/87056/when-nginx-is-configured-as-reverse-proxy-can-it-rewrite-the-host-header-to-the",
         "query": "preserve original Host header through nginx reverse proxy",
         "keywords": ["proxy_set_header", "Host", "X-Forwarded-For", "$http_host"],
     },
     {
-        "id": "stackoverflow_44488350",
-        "url": "https://stackoverflow.com/questions/44488350/python-asyncio-subprocess-with-timeout",
+        "id": "stackoverflow_42639984",
+        "url": "https://stackoverflow.com/questions/42639984/python3-asyncio-wait-for-communicate-with-timeout-how-to-get-partial-resul",
         "query": "asyncio subprocess with timeout",
         "keywords": ["asyncio", "subprocess", "wait_for", "timeout"],
     },
@@ -146,10 +145,7 @@ def run(case: dict[str, Any]) -> None:
     # Phase 0 — raw API withbody HTML.
     t = time.monotonic()
     api_html, info = _fetch_api_withbody(url)
-    print(
-        f"[p0]  API withbody HTML        {int((time.monotonic()-t)*1000)}ms  "
-        f"info={info}"
-    )
+    print(f"[p0]  API withbody HTML        {int((time.monotonic() - t) * 1000)}ms  info={info}")
     print(f"      {_presence_row(api_html, keywords)}")
     print(f"      char_count={len(api_html)}")
 
