@@ -483,7 +483,7 @@ def _build_profile_result(
         t_ret = time.monotonic()
         chosen_k = _adaptive_k(len(chunks), override=k)
         retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
-        hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "0") == "1"
+        hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "1") != "0"
         chunk_budget = _read_chunk_budget()
         context_batch = _contextual_batch(chunks, page_title, query or "")
         retrieved = retrieval.retrieve(
@@ -1205,7 +1205,7 @@ def _run_full_pipeline(
     # 4. Retrieve + rerank
     chosen_k = _adaptive_k(len(chunks), override=k)
     retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
-    hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "0") == "1"
+    hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "1") != "0"
     chunk_budget = _read_chunk_budget()
     context_batch = _contextual_batch(chunks, page_title, query)
     retrieved = retrieval.retrieve(
