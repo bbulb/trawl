@@ -177,6 +177,34 @@ Optional:
 - A vision LLM on `:8080` for `profile_page` (only needed if you use
   the profiling feature)
 
+### Reference `llama-server` commands
+
+The reference local setup runs four `llama-server` processes. These are
+the canonical flag sets validated against the parity matrix and the
+coding `agent_patterns` shard. Adjust `-ngl`, `--ctx-size`, and
+`--parallel` to your hardware.
+
+```bash
+# :8081 — bge-m3 embeddings (REQUIRED for retrieval)
+llama-server -m ~/models/bge-m3-Q8_0.gguf \
+  --embeddings --pooling cls \
+  --port 8081 -ngl 99 --ctx-size 8192 -ub 2048 -b 2048
+
+# :8083 — bge-reranker-v2-m3 cross-encoder (optional, graceful fallback)
+llama-server -m ~/models/bge-reranker-v2-m3-Q8_0.gguf \
+  --reranking --pooling rank \
+  --port 8083 -ngl 99 --ctx-size 65536 \
+  --parallel 4 -ub 2048 -b 2048
+
+# :8082 — small utility LLM for HyDE (optional, off by default)
+llama-server -m ~/models/gemma-3-4b-it-Q4_K_M.gguf \
+  --port 8082 -ngl 99 --ctx-size 4096
+
+# :8080 — vision LLM for profile_page (optional, manual-trigger only)
+llama-server -m ~/models/<vision-model>.gguf --mmproj ~/models/<mmproj>.gguf \
+  --port 8080 -ngl 99 --ctx-size 8192
+```
+
 ## Install
 
 The reference setup uses a dedicated conda/mamba environment
