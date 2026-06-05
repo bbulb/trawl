@@ -94,7 +94,10 @@ patterns:
     query: "definitions of the verb run"
     live: required
     assertions:
-      chunks_contain_any: ["verb", "definition", "etymology"]
+      # 2026-06-05: matching is case-sensitive over heading+text; the
+      # returned chunks carry "run > English > Verb" heading paths, so
+      # use the capitalised section names Wiktionary actually renders.
+      chunks_contain_any: ["Verb", "Etymology", "definition"]
       n_chunks_returned: ">= 3"
       error_is_none: true
     budgets:
