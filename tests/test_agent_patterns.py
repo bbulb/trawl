@@ -19,8 +19,14 @@ Invoke:
     python tests/test_agent_patterns.py --baseline              # write budgets
     python tests/test_agent_patterns.py --regression            # +20% gate
     python tests/test_agent_patterns.py --repeats 3             # p95 latency
+    python tests/test_agent_patterns.py --no-isolation          # reuse ~/.cache/trawl
 
-Exit code 0 iff every selected pattern passes.
+Live runs default to a fresh temp-dir trawl state (profiles, visit
+counts, fetch/embed caches, host stats) so stateful patterns start
+cold; `--no-isolation` opts back into the ambient ~/.cache/trawl.
+
+Exit code 0 iff every selected `live: required` pattern passes
+(failing `live: optional` patterns count as SKIP).
 
 See `docs/superpowers/specs/2026-04-19-agent-patterns-design.md` for
 design rationale.
@@ -30,9 +36,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import statistics
 import sys
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -134,6 +142,37 @@ def _filter_patterns(
     if limit:
         out = out[:limit]
     return out
+
+
+# State isolation ------------------------------------------------------
+
+# Catalog assertions assume a cold local state: repeat_visits patterns
+# build their own C8 cache hits and visit counts step by step, and
+# host_transfer patterns create their own profile via a profile_page
+# step. A developer machine usually has profiles / caches left over
+# from earlier sessions (e.g. a cached pypi.org profile routes
+# fetch_page through the profile fast path, bypassing the fetch cache
+# and suggest_profile entirely), which silently flips those patterns.
+# Isolation points every trawl state file at a fresh temp dir so a run
+# starts cold by construction. Env vars must be set BEFORE the lazy
+# `from trawl import ...` in _run_operation: several path constants
+# (TRAWL_PROFILE_DIR, TRAWL_VISITS_FILE) are read at import time.
+
+_ISOLATION_ENV = {
+    "TRAWL_PROFILE_DIR": "profiles",
+    "TRAWL_VISITS_FILE": "visits.json",
+    "TRAWL_FETCH_CACHE_PATH": "fetches",
+    "TRAWL_EMBED_CACHE_PATH": "embeddings",
+    "TRAWL_HOST_STATS_PATH": "host_stats.json",
+}
+
+
+def _setup_isolation() -> Path:
+    """Point all trawl state paths at a fresh temp dir; return it."""
+    root = Path(tempfile.mkdtemp(prefix="trawl-agent-patterns-"))
+    for var, rel in _ISOLATION_ENV.items():
+        os.environ[var] = str(root / rel)
+    return root
 
 
 # Operation runner ----------------------------------------------------
@@ -583,6 +622,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run", action="store_true", help="schema validation + filter, no live fetches"
     )
     p.add_argument(
+        "--no-isolation",
+        action="store_true",
+        help="reuse the ambient ~/.cache/trawl state instead of a fresh temp dir "
+        "(live runs default to isolated state so repeat_visits/host_transfer "
+        "patterns start cold)",
+    )
+    p.add_argument(
         "--baseline", action="store_true", help="write current p95 measurements as new baseline"
     )
     p.add_argument(
@@ -624,6 +670,10 @@ def main(argv: list[str] | None = None) -> int:
         for p in selected:
             print(f"  [{p.shard}] {p.id} ({p.category}) — {p.description[:80]}")
         return 0
+
+    if not args.no_isolation:
+        iso_root = _setup_isolation()
+        print(f"isolated trawl state: {iso_root}")
 
     outcomes = [
         _run_pattern(p, dry_run=False, repeats=args.repeats, verbose=args.verbose) for p in selected

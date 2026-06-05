@@ -28,6 +28,9 @@ tests/agent_patterns/
 
 ```bash
 # 전체 (live mode — bge-m3 endpoint 필요)
+# live run은 기본적으로 임시 디렉터리로 trawl 상태(프로파일·방문수·
+# fetch/embed 캐시·host stats)를 격리해 cold start를 보장한다.
+# 로컬 ~/.cache/trawl 상태를 그대로 쓰려면 --no-isolation.
 mamba run -n trawl python tests/test_agent_patterns.py
 
 # shard / 단건 / 카테고리 / agent 별 필터
