@@ -179,7 +179,12 @@ patterns:
     url: "https://news.ycombinator.com/rss"
     live: required
     assertions:
-      fetcher_used: "passthrough"
+      # 2026-06-06: HN rejects HEAD on /rss with 405 (path is /rss, not a
+      # .rss suffix), so probe() now uses its header-only GET fallback and
+      # reports the probed fetcher name. content_type added to lock the
+      # RSS detection.
+      fetcher_used: "passthrough-probed"
+      content_type: "application/rss+xml; charset=utf-8"
       n_chunks_returned: ">= 1"
       error_is_none: true
     budgets:

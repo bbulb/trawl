@@ -76,25 +76,44 @@ class PassthroughResult:
         return self.error is None
 
 
-def probe(url: str, *, timeout_s: float = 3.0) -> str | None:
-    """HEAD `url` and return its Content-Type when it names a passthrough
-    media type. Returns None for every other outcome (non-passthrough
-    Content-Type, HEAD not supported, redirect chain, network error).
+# Statuses that mean "HEAD is rejected here, but GET may still work" —
+# common on feeds/APIs that only implement GET (e.g. Hacker News /rss
+# answers 405 to HEAD, 200 to GET).
+_HEAD_UNSUPPORTED_STATUSES = frozenset({403, 405, 501})
 
-    The caller is expected to fall through to the normal HTML fetcher
-    when None is returned. A short default timeout keeps the probe from
-    stalling page loads on unresponsive origins — failure of the probe
-    must not make trawl slower than before.
+
+def probe(url: str, *, timeout_s: float = 3.0) -> str | None:
+    """Return `url`'s Content-Type when it names a passthrough media type.
+
+    Tries a cheap HEAD first. If HEAD succeeds, its Content-Type decides
+    (no GET on ordinary HTML pages — keeps the probe a single request on
+    the common path). Only when HEAD is *rejected* (405/403/501) or
+    raises does it fall back to a header-only GET: hosts like Hacker
+    News `/rss` refuse HEAD but serve `application/rss+xml` on GET. The
+    GET fallback reads response headers and closes without downloading
+    the body. Returns None on any non-passthrough or error outcome so
+    the caller falls through to the normal HTML fetcher.
     """
     try:
         with httpx.Client(timeout=timeout_s, follow_redirects=True) as client:
             resp = client.head(url)
+        if resp.status_code < 400:
+            ct = resp.headers.get("content-type")
+            return ct if is_passthrough_content_type(ct) else None
+        if resp.status_code not in _HEAD_UNSUPPORTED_STATUSES:
+            return None
+        # fall through to the GET fallback below
+    except httpx.HTTPError:
+        pass  # HEAD unsupported entirely; try a header-only GET
+
+    try:
+        with httpx.stream("GET", url, follow_redirects=True, timeout=timeout_s) as resp:
+            if resp.status_code >= 400:
+                return None
+            ct = resp.headers.get("content-type")
+            return ct if is_passthrough_content_type(ct) else None
     except httpx.HTTPError:
         return None
-    if resp.status_code >= 400:
-        return None
-    ct = resp.headers.get("content-type")
-    return ct if is_passthrough_content_type(ct) else None
 
 
 def fetch(url: str, *, timeout_s: float = 15.0) -> PassthroughResult:
