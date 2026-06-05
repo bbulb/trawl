@@ -365,3 +365,38 @@ def test_setup_isolation_points_all_state_env_at_temp_dir(monkeypatch):
     finally:
         for var in _ISOLATION_ENV:
             os.environ.pop(var, None)
+
+
+# ---------- profile_page implicit success check
+
+
+def test_profile_step_ok_true_passes():
+    from test_agent_patterns import _check_profile_step
+
+    assert _check_profile_step({}, {"ok": True, "main_selector": "div.x"}) == []
+
+
+def test_profile_step_ok_false_fails_with_stage_and_error():
+    from test_agent_patterns import _check_profile_step
+
+    fails = _check_profile_step({}, {"ok": False, "stage": "vlm", "error": "VLM down"})
+    assert len(fails) == 1
+    assert "stage=vlm" in fails[0]
+    assert "VLM down" in fails[0]
+
+
+def test_profile_step_error_contains_opts_out_of_implicit_check():
+    """A pattern asserting an intentional failure handles ok=False itself."""
+    from test_agent_patterns import _check_profile_step
+
+    fails = _check_profile_step(
+        {"error_contains": "VLM"}, {"ok": False, "stage": "vlm", "error": "VLM down"}
+    )
+    assert fails == []
+
+
+def test_profile_step_missing_ok_key_passes():
+    """Defensive: dicts without ok (e.g. mocked) are not implicit failures."""
+    from test_agent_patterns import _check_profile_step
+
+    assert _check_profile_step({}, {}) == []

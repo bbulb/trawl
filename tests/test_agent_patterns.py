@@ -396,6 +396,10 @@ def _run_pattern(
             assertion_failures = (
                 _evaluate_assertions(step.assertions, measurements) if not dry_run else []
             )
+            if not dry_run and step.op == "profile_page":
+                assertion_failures = (
+                    _check_profile_step(step.assertions, measurements) + assertion_failures
+                )
             budget_failures = (
                 _evaluate_budgets(step.budgets, measurements, elapsed_p95) if not dry_run else []
             )
@@ -416,6 +420,25 @@ def _run_pattern(
     except Exception as e:  # noqa: BLE001
         outcome.error = f"{type(e).__name__}: {e}"
     return outcome
+
+
+def _check_profile_step(assertions: dict[str, Any], measurements: dict[str, Any]) -> list[str]:
+    """Implicit success check for profile_page steps.
+
+    generate_profile() reports failure as structured data
+    (`{ok: False, stage, error, notes}`) instead of raising, so without
+    this check a failed profile step passes silently and only the NEXT
+    step's profile_used assertion fails, pointing at the wrong step.
+    A pattern that intentionally asserts a profile failure can opt out
+    by declaring an explicit `error_contains` assertion.
+    """
+    if "error_contains" in assertions:
+        return []
+    if measurements.get("ok") is False:
+        stage = measurements.get("stage", "?")
+        error = measurements.get("error", "")
+        return [f"profile_page failed at stage={stage}: {error}"]
+    return []
 
 
 def _p95(samples: list[int]) -> float:
