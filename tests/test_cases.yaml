@@ -186,13 +186,16 @@ cases:
     url: "https://www.wanted.co.kr/wdlist/518"
     query: "프론트엔드 개발자 채용 공고"
     ground_truth:
-      # 2026-06-05: wdlist/518 job titles drifted Korean -> English
-      # ("프론트엔드" -> "Front-end") and the list broadened past
-      # frontend-only. The Korean query still ranks "Front-end Chapter
-      # Lead" at rank 1, so retrieval is healthy; assert the page's
-      # current frontend spelling instead of the dropped Korean term.
+      # 2026-06-06: wdlist/518 rotates job titles hourly and flips their
+      # language ("프론트엔드" / "Front-end" / "Frontend Developer"), so
+      # any single title spelling is an unstable assertion (drifted twice
+      # in one day). This case exists to verify repeating-record chunking
+      # (records.py) emits individual job cards for a Korean jobs query —
+      # assert the invariant card structure instead: every wanted job
+      # card carries the "합격보상금" signing-bonus label plus an
+      # experience marker. The frontend query still drives retrieval.
       must_contain_all:
-        - "Front-end"
+        - "합격보상금"
       must_contain_any:
         - "경력"
         - "신입"
