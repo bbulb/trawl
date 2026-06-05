@@ -180,7 +180,10 @@ patterns:
     primary_agent: [hermes]
     category: compositional
     description: "arXiv abs 조회 → outbound_links/page_entities로 follow-up search 가능 (C16 enriched payload 활용)"
-    live: required
+    # 2026-06-05: step 1 (DDG /html SERP) hits the same anti-bot anomaly
+    # page as the search_ddg shard; step 0 (arXiv + C16) is stable.
+    # Restore `required` if step 1 moves to a non-DDG search endpoint.
+    live: optional
     steps:
       - op: fetch_page
         url: "https://arxiv.org/abs/2402.03216"   # BGE-M3
