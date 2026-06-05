@@ -190,12 +190,15 @@ patterns:
   - id: openclaw_news_hada_io
     primary_agent: [openclaw, claude_code]
     category: single_fetch
-    description: "뉴스해다 메인 — 한국 dev/startup aggregator"
+    description: "GeekNews 메인 — 한국 dev/startup aggregator (news.hada.io)"
     url: "https://news.hada.io/"
     query: "최근 IT 스타트업 뉴스"
     live: required
     assertions:
-      chunks_contain_any: ["points by", "댓글"]
+      # 2026-06-05: aligned with parity hada_news (PR #49) — site
+      # rebranded to "GeekNews" and dropped the "points by" / "댓글"
+      # labels on the home page. Same stable markers as parity.
+      chunks_contain_any: ["GeekNews", "topic?id"]
       n_chunks_returned: ">= 5"
       error_is_none: true
     budgets:
