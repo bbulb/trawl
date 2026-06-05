@@ -7,6 +7,22 @@ not yet follow semver strictly — expect breaking changes before
 
 ## [Unreleased]
 
+### Added
+
+- **Indirect prompt-injection defense** (default on, opt out via
+  `TRAWL_INJECTION_SCAN=0`) — each fetch is scanned (model-free,
+  `src/trawl/sanitize.py`): Unicode tag characters (U+E0000–E007F) are
+  stripped, instruction-like chunks gain `suspicious_injection`, and
+  instruction-like CSS-hidden / off-screen / aria-hidden segments gain
+  `suspicious_hidden` (annotate, never delete). Signals surface in
+  `PipelineResult.warnings`; flag keys appear on a chunk only when
+  true. MCP `fetch_page` / `profile_page` carry `openWorldHint` +
+  `readOnlyHint` annotations alongside the existing untrusted-content
+  `content_boundary` response field. Cost is <1% on a 198 KB /
+  600-chunk worst case. Gates: fixtures 3/3 + benign 0-flag, parity
+  15/15, coding 24/24, latency +5%. See
+  `docs/superpowers/specs/2026-06-05-injection-defense-design.md`.
+
 ### Fixed
 
 - **Wikipedia fetcher heading preservation** — modern MediaWiki HTML

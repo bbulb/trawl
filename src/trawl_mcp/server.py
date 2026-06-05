@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import TextContent, Tool, ToolAnnotations
 
 import trawl.pipeline as trawl_pipeline
 import trawl.telemetry as trawl_telemetry
@@ -288,6 +288,13 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="fetch_page",
             description=FETCH_PAGE_DESCRIPTION,
+            annotations=ToolAnnotations(
+                title="Fetch web page (query-relevant chunks)",
+                readOnlyHint=True,
+                # Hits arbitrary external URLs — output is untrusted web
+                # content. See CONTENT_BOUNDARY in every response.
+                openWorldHint=True,
+            ),
             inputSchema={
                 "type": "object",
                 "required": ["url"],
@@ -342,6 +349,11 @@ async def list_tools() -> list[Tool]:
             Tool(
                 name="profile_page",
                 description=PROFILE_PAGE_DESCRIPTION,
+                annotations=ToolAnnotations(
+                    title="Profile web page (cache extraction selector)",
+                    readOnlyHint=True,
+                    openWorldHint=True,
+                ),
                 inputSchema={
                     "type": "object",
                     "required": ["url"],
