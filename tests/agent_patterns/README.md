@@ -116,6 +116,16 @@ step이 assertion 없이도 실패로 기록된다 (silent failure가 다음 ste
 `<primary_agent>_<topic>_<intent>` 형태. shard 안에서, 그리고 모든 shard
 횡단으로 고유해야 한다 (`loader._load_one` 가 검사).
 
+## Stateful 패턴의 URL 고유성 규칙
+
+visit count / cache_hit / suggest_profile 에 의존하는 패턴(주로
+workflows.yaml의 repeat_visits·host_transfer)의 URL은 **카탈로그 전체에서
+고유**해야 한다. 전체 run은 격리된 상태 디렉터리 하나를 공유하므로, 같은
+URL을 다른 shard가 먼저 방문하면 방문 수·캐시가 선적립되어 시나리오의
+step별 가정이 깨진다 (2026-06-05 naver sise_market_sum 사례: finance
+shard 방문 1회 → workflows step 1의 `suggest_profile: false` off-by-one
+실패).
+
 ## Assertion / Budget DSL 키 화이트리스트
 
 `schema.ASSERTION_KEYS` / `schema.BUDGET_KEYS` 정의. 새 키를 추가하려면

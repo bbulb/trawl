@@ -40,8 +40,11 @@ patterns:
   - id: openclaw_hankyung_market
     primary_agent: [openclaw]
     category: single_fetch
-    description: "한경 마켓 메인"
-    url: "https://www.hankyung.com/market"
+    description: "한경 마켓 메인 (markets 서브도메인)"
+    # 2026-06-05: hankyung.com/market is a dead URL (site restructure,
+    # returns a "페이지를 찾을 수 없습니다" page). markets.hankyung.com
+    # is the live markets hub (verified: 8 chunks, KOSPI/KOSDAQ data).
+    url: "https://markets.hankyung.com/"
     query: "오늘 코스피 코스닥 동향"
     live: required
     assertions:
