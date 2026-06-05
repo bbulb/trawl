@@ -130,6 +130,13 @@ benchmark locally to regenerate.
 - **VLM page profiling** (optional) — when the same site is visited
   repeatedly, trawl can ask a vision LLM to propose a CSS selector
   that scopes future fetches to the article region. Cached per host.
+- **Indirect prompt-injection defense** (default on) — fetched content
+  is scanned (model-free): invisible Unicode tag characters are
+  stripped, and instruction-like text — whether in visible chunks or in
+  CSS-hidden / off-screen nodes — is flagged with `suspicious_injection`
+  / `suspicious_hidden` and a scan warning, so the consuming agent gets
+  an untrusted-content signal instead of silently relayed instructions.
+  Disable via `TRAWL_INJECTION_SCAN=0`.
 - **stdio MCP server** exposing `fetch_page` and `profile_page` tools
   for Claude Code, Claude Desktop, and any MCP-compatible client.
 
@@ -358,6 +365,7 @@ expects the filename you passed to `-m`). Complete list in
 | `TRAWL_SCRAPLING_FALLBACK` | `0` | Enable optional Scrapling fallback after Playwright fails or returns unusable/anti-bot content. Requires `.[scrapling]`. |
 | `TRAWL_SCRAPLING_MODE` | `auto` | Scrapling mode: `auto`, `dynamic`, or `stealthy`. `auto` uses stealthy only for anti-bot-looking failures. |
 | `TRAWL_SCRAPLING_TIMEOUT_MS` | `30000` | Scrapling fallback timeout in milliseconds. |
+| `TRAWL_INJECTION_SCAN` | `1` | Scan fetched content for indirect prompt injection (Unicode tag-char strip + `suspicious_injection`/`suspicious_hidden` chunk flags + scan warnings). `0` disables. |
 | `TRAWL_VLM_URL` | `http://localhost:8080/v1` | Vision LLM for page profiling |
 | `TRAWL_VLM_MODEL` | `gemma` | Vision model name |
 | `TRAWL_VLM_TIMEOUT` | `120` | VLM request timeout (seconds) |

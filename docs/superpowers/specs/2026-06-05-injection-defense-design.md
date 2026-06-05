@@ -28,10 +28,17 @@ the consuming agent unambiguously that the payload is untrusted.
 
 ## Scope — three layers + fixtures
 
-### Layer 1 — deterministic strip / annotate (fetch → extraction)
+### Layer 1 — deterministic strip / annotate
 
-New module `src/trawl/sanitize.py`, applied in the pipeline between
-fetch and extraction:
+New module `src/trawl/sanitize.py`. **Implementation note (2026-06-05):**
+the scan runs once per fetch over the *returned chunk dicts* plus the
+fetched HTML (`pipeline._scan_injection`, called just before
+`PipelineResult` construction in both the full-retrieval and profile
+paths), rather than literally between fetch and extraction. trawl only
+needs to annotate what it actually returns; the HTML is still scanned
+for the tag-char / hidden-segment signals that extraction may have
+already dropped. Net effect matches the design; the insertion point is
+post-retrieval for a single, uniform hook across paths.
 
 1. **Unicode tag characters (U+E0000–U+E007F): strip, always.**
    They have no legitimate rendering use; their only practical role
@@ -136,3 +143,24 @@ Failure of any gate → default flips to `TRAWL_INJECTION_SCAN=0`
   text catalog, BIPIA/InjecAgent fixture sources).
 - MCP tool annotations: spec 2025-03-26; response provenance RFC:
   modelcontextprotocol issue #711 / PR #1913.
+
+## Outcome (2026-06-05) — ADOPT
+
+All five gates pass; default on (`TRAWL_INJECTION_SCAN=1`).
+
+| Gate | Result |
+|---|---|
+| Fixtures 3/3 + benign 0-flag | PASS (also verified end-to-end through the pipeline via a mocked fetcher) |
+| Parity 15/15 | PASS (scan off and on) |
+| Coding 24/24 | PASS (scan on) |
+| Latency +5% | PASS — 21.5 ms on a 198 KB / 600-chunk worst case (<1% of a multi-second longform fetch); ~1–3 ms typical |
+| Full offline pytest + ruff | PASS — 443 passed, ruff clean |
+
+**Build correction (advisor review).** The first cut warned on any
+hidden node ≥12 chars; benign hidden content (sr-only, collapsed menus)
+is pervasive, so default-on this would flood ordinary pages — a
+benign-0-flag gate violation the original fixture masked. Fixed by
+gating the CSS-hidden branch on `looks_like_injection` (matching the
+aria-hidden branch) and adding benign `display:none` + off-screen
+blocks to `benign_control.html`. Confirmed quiet on en/ko Wikipedia and
+the HN front page. Local detail: `notes/injection-defense-outcome.md`.

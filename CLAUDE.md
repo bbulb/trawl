@@ -166,6 +166,23 @@ trawl directory. Humans should read `README.md` first, then
     reports the post-prefilter count. See
     `docs/superpowers/specs/2026-04-20-longform-retrieval-cost-design.md`
     and `docs/superpowers/specs/2026-04-22-chunk-budget-default-on-design.md`.
+  - **Indirect prompt-injection defense** (default on, opt out via
+    `TRAWL_INJECTION_SCAN=0`) — `src/trawl/sanitize.py` runs a
+    model-free scan per fetch (`pipeline._scan_injection`, both the
+    full-retrieval and profile return paths): strips Unicode tag chars
+    (U+E0000–E007F), flags instruction-like chunks
+    (`suspicious_injection`) and instruction-like CSS-hidden /
+    off-screen / aria-hidden segments (`suspicious_hidden`) —
+    annotate, never delete. Signals land in `PipelineResult.warnings`;
+    flag keys appear on a chunk only when true. MCP `fetch_page` /
+    `profile_page` carry `openWorldHint` + `readOnlyHint` annotations
+    plus the existing `content_boundary` response field. The
+    CSS-hidden branch is gated on the instruction-pattern matcher so
+    benign hidden content (sr-only text, collapsed menus) does not warn
+    — load-bearing for the benign-0-flag gate; do not loosen without a
+    companion false-positive check. Cost <1% on a 198 KB / 600-chunk
+    page. See
+    `docs/superpowers/specs/2026-06-05-injection-defense-design.md`.
   - **Shadow-DOM unwrap for code-block custom elements** (default on)
     — `fetchers/playwright.py` inlines each matching element's
     `shadowRoot`'s `pre > code` textContent (wrapped in a fresh

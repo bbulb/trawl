@@ -30,6 +30,7 @@ from . import (
     hyde,
     reranking,
     retrieval,
+    sanitize,
     telemetry,
 )
 from .fetchers import (
@@ -229,6 +230,23 @@ def _chunk_to_dict(chunk, *, score: float | None, title: str = "") -> dict:
     if getattr(chunk, "char_span", None) is not None:
         payload["char_span"] = list(chunk.char_span)
     return payload
+
+
+def _scan_injection(chunk_dicts: list[dict], *, html: str | None) -> list[str]:
+    """Annotate chunk dicts for injection signals; return scan warnings.
+
+    No-op (returns []) when the scan is disabled via
+    ``TRAWL_INJECTION_SCAN=0`` or on any unexpected error — the scan
+    must never break a fetch.
+    """
+    if not sanitize.is_enabled():
+        return []
+    try:
+        _, warnings = sanitize.annotate_chunks(chunk_dicts, html=html)
+        return warnings
+    except Exception as e:  # noqa: BLE001
+        logger.warning("injection scan failed, skipping: %s", e)
+        return []
 
 
 def _retrieval_diagnostics(result: retrieval.RetrievalResult) -> dict:
@@ -540,12 +558,15 @@ def _build_profile_result(
         # Direct path returned all chunks above; mirror them for enrichment.
         emitted_chunks = list(chunks)
 
+    scan_warnings = _scan_injection(retrieved_dicts, html=subtree_html)
+    profile_warnings = ([retrieval_warning] if retrieval_warning else []) + scan_warnings
+
     return PipelineResult(
         **base_kwargs,
         retrieval_ms=retrieval_ms,
         total_ms=int((time.monotonic() - t_start) * 1000),
         chunks=retrieved_dicts,
-        warnings=[retrieval_warning] if retrieval_warning else [],
+        warnings=profile_warnings,
         path=path,
         rerank_used=use_rerank and path == "profile_retrieval",
         rerank_ms=rerank_ms,
@@ -1252,7 +1273,12 @@ def _run_full_pipeline(
         final_scored = retrieved.scored
 
     emitted_chunks = [s.chunk for s in final_scored]
+    chunk_dicts = [
+        _chunk_to_dict(c, score=s.score, title=page_title)
+        for c, s in zip(emitted_chunks, final_scored, strict=True)
+    ]
     warnings = [retrieved.warning] if retrieved.warning else []
+    warnings += _scan_injection(chunk_dicts, html=fetched_html)
     return PipelineResult(
         url=url,
         query=query,
@@ -1266,10 +1292,7 @@ def _run_full_pipeline(
         structured_path=False,
         hyde_used=use_hyde,
         hyde_text=hyde_text,
-        chunks=[
-            _chunk_to_dict(c, score=s.score, title=page_title)
-            for c, s in zip(emitted_chunks, final_scored, strict=True)
-        ],
+        chunks=chunk_dicts,
         warnings=warnings,
         excerpts=enrichment.extract_excerpts(emitted_chunks),
         outbound_links=enrichment.extract_outbound_links(emitted_chunks),
