@@ -114,7 +114,7 @@ patterns:
     description: "Reuters Markets — global market wrap"
     url: "https://www.reuters.com/markets/"
     query: "today's market summary"
-    live: required
+    live: optional       # 2026-06-05: anti-bot — 'empty markdown after extraction'
     assertions:
       n_chunks_returned: ">= 3"
       error_is_none: true
@@ -140,7 +140,7 @@ patterns:
     description: "MarketWatch — 미국 주식 + futures"
     url: "https://www.marketwatch.com/markets"
     query: "today's U.S. stock market open"
-    live: required
+    live: optional       # 2026-06-05: anti-bot — 'empty markdown after extraction'
     assertions:
       n_chunks_returned: ">= 3"
       error_is_none: true

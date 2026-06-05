@@ -16,7 +16,7 @@ patterns:
     description: "DDG HTML SERP — Python async 검색 결과"
     url: "https://duckduckgo.com/html/?q=python+asyncio+gather+exception+handling"
     query: "python asyncio gather exception handling"
-    live: required
+    live: optional       # 2026-06-05: DDG /html anti-bot anomaly page
     assertions:
       chunks_contain_any: ["asyncio", "gather", "exception"]
       n_chunks_returned: ">= 3"
@@ -30,7 +30,7 @@ patterns:
     description: "DDG HTML SERP — 한국어 검색 (CJK 텍스트 SERP)"
     url: "https://duckduckgo.com/html/?q=오늘+코스피+동향&kl=kr-kr"
     query: "오늘 코스피 동향"
-    live: required
+    live: optional       # 2026-06-05: DDG /html anti-bot anomaly page
     assertions:
       n_chunks_returned: ">= 3"
       error_is_none: true
@@ -43,7 +43,7 @@ patterns:
     description: "DDG SERP — arXiv 도메인 한정 검색"
     url: "https://duckduckgo.com/html/?q=site%3Aarxiv.org+retrieval+augmented+generation"
     query: "site:arxiv.org retrieval augmented generation"
-    live: required
+    live: optional       # 2026-06-05: DDG /html anti-bot anomaly page
     assertions:
       chunks_contain_any: ["arxiv.org", "retrieval"]
       n_chunks_returned: ">= 3"
@@ -57,7 +57,7 @@ patterns:
     description: "DDG SERP — GitHub 도메인 한정 검색"
     url: "https://duckduckgo.com/html/?q=site%3Agithub.com+mcp+server+python"
     query: "site:github.com mcp server python"
-    live: required
+    live: optional       # 2026-06-05: DDG /html anti-bot anomaly page
     assertions:
       chunks_contain_any: ["github.com"]
       n_chunks_returned: ">= 3"

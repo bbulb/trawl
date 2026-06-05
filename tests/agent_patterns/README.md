@@ -61,6 +61,10 @@ mamba run -n trawl python tests/test_agent_patterns.py --regression
   url: "https://..."
   query: "자연어 쿼리 (passthrough는 생략 가능)"
   live: required | optional | never                  # default: required
+  # `optional`: 패턴은 항상 실행되지만 실패가 SKIP(경고)으로 분류되어
+  # exit code에 반영되지 않음. anti-bot/geo-block 등 사이트 사정으로
+  # 결과가 불안정한 URL에 사용 — 사유를 인라인 주석으로 남길 것.
+  # `never`: 예약됨 (fixture 실행 모드, 미구현 — 현재는 live와 동일).
   assertions:
     chunks_contain_any: ["a", "b"]                   # 둘 중 하나라도 등장하면 OK
     n_chunks_returned: ">= 3"

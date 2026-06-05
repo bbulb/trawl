@@ -86,6 +86,7 @@ class PatternOutcome:
     category: str
     repeats: int
     total_ms_p95: int
+    live: str = "required"
     steps: list[StepOutcome] = field(default_factory=list)
     error: str | None = None
 
@@ -94,7 +95,19 @@ class PatternOutcome:
         if self.error:
             return False
         return all(not s.assertion_failures and not s.budget_failures for s in self.steps)
-        return all(not s.assertion_failures and not s.budget_failures for s in self.steps)
+
+    @property
+    def status(self) -> str:
+        """PASS / FAIL / SKIP.
+
+        A failing `live: optional` pattern is reported as SKIP: the
+        site is known-unstable (anti-bot, geo-blocking), so its failure
+        is surfaced as a warning instead of failing the run. Failures
+        of `live: required` patterns stay FAIL and drive the exit code.
+        """
+        if self.passed:
+            return "PASS"
+        return "SKIP" if self.live == "optional" else "FAIL"
 
 
 # Filtering -----------------------------------------------------------
@@ -307,6 +320,7 @@ def _run_pattern(
         category=pattern.category,
         repeats=repeats if not dry_run else 0,
         total_ms_p95=0,
+        live=pattern.live,
     )
 
     try:
@@ -379,7 +393,7 @@ def _p95(samples: list[int]) -> float:
 
 
 def _print_pattern_summary(outcome: PatternOutcome, *, verbose: bool) -> None:
-    status = "PASS" if outcome.passed else "FAIL"
+    status = outcome.status
     head = f"[{status}] {outcome.shard}/{outcome.id} ({outcome.category})"
     if outcome.repeats:
         head += f"  total_p95={outcome.total_ms_p95}ms (repeats={outcome.repeats})"
@@ -442,10 +456,12 @@ def _render_summary(outcomes: list[PatternOutcome]) -> str:
 
     total = len(outcomes)
     passed = sum(1 for o in outcomes if o.passed)
+    skipped = sum(1 for o in outcomes if o.status == "SKIP")
     lines = [
         "# Agent patterns — run summary",
         "",
-        f"- Total: **{passed}/{total}** patterns passed",
+        f"- Total: **{passed}/{total}** patterns passed"
+        + (f", {skipped} skipped (`live: optional`)" if skipped else ""),
         "",
     ]
     for shard in sorted(by_shard):
@@ -456,16 +472,20 @@ def _render_summary(outcomes: list[PatternOutcome]) -> str:
         lines.append("| pattern | category | result | total_p95 |")
         lines.append("|---|---|---|---|")
         for o in items:
-            status = "PASS" if o.passed else "FAIL"
-            lines.append(f"| `{o.id}` | {o.category} | {status} | {o.total_ms_p95}ms |")
-            lines.append(f"| `{o.id}` | {o.category} | {status} | {o.total_ms_p95}ms |")
+            lines.append(f"| `{o.id}` | {o.category} | {o.status} | {o.total_ms_p95}ms |")
         lines.append("")
     return "\n".join(lines)
 
 
 def _render_failure(o: PatternOutcome) -> str:
-    lines = [f"# {o.id} — FAIL", "", f"- shard: `{o.shard}`", f"- category: `{o.category}`", ""]
-    lines = [f"# {o.id} — FAIL", "", f"- shard: `{o.shard}`", f"- category: `{o.category}`", ""]
+    lines = [
+        f"# {o.id} — {o.status}",
+        "",
+        f"- shard: `{o.shard}`",
+        f"- category: `{o.category}`",
+        f"- live: `{o.live}`",
+        "",
+    ]
     if o.error:
         lines += ["## error", "", "```", o.error, "```", ""]
     for i, step in enumerate(o.steps):
@@ -617,13 +637,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.baseline:
         _write_baseline(outcomes)
 
-    failed = [o for o in outcomes if not o.passed]
+    failed = [o for o in outcomes if o.status == "FAIL"]
+    skipped = [o for o in outcomes if o.status == "SKIP"]
     regressions = _check_regression(outcomes) if args.regression else []
     for r in regressions:
         print(f"REGRESSION: {r}", file=sys.stderr)
 
     print(
-        f"\n{len(outcomes) - len(failed)}/{len(outcomes)} pass"
+        f"\n{len(outcomes) - len(failed) - len(skipped)}/{len(outcomes)} pass"
+        + (f", {len(skipped)} skipped (live: optional)" if skipped else "")
         + (f", {len(regressions)} regression(s)" if regressions else "")
     )
 

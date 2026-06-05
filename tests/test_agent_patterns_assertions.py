@@ -309,3 +309,41 @@ def test_cache_hit_defaults_to_false_when_field_missing():
     assert fails == []
     fails = _evaluate_assertions({"cache_hit": True}, {})
     assert len(fails) == 1
+
+
+# ---------- live: optional SKIP semantics (PatternOutcome.status)
+
+
+def _outcome(live: str, *, failing: bool):
+    from test_agent_patterns import PatternOutcome, StepOutcome
+
+    step = StepOutcome(
+        op="fetch_page",
+        url="https://example.com",
+        query="q",
+        elapsed_ms=1,
+        measurements={},
+        assertion_failures=["boom"] if failing else [],
+    )
+    return PatternOutcome(
+        id="t",
+        shard="s",
+        category="single_fetch",
+        repeats=1,
+        total_ms_p95=1,
+        live=live,
+        steps=[step],
+    )
+
+
+def test_status_pass_regardless_of_live_mode():
+    assert _outcome("required", failing=False).status == "PASS"
+    assert _outcome("optional", failing=False).status == "PASS"
+
+
+def test_status_fail_when_required_pattern_fails():
+    assert _outcome("required", failing=True).status == "FAIL"
+
+
+def test_status_skip_when_optional_pattern_fails():
+    assert _outcome("optional", failing=True).status == "SKIP"

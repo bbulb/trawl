@@ -130,7 +130,7 @@ patterns:
     description: "NBA scoreboard — today's games"
     url: "https://www.nba.com/scores"
     query: "tonight's NBA games"
-    live: required
+    live: optional       # 2026-06-05: ERR_HTTP2_PROTOCOL_ERROR — bot-block at TLS/H2 layer
     assertions:
       n_chunks_returned: ">= 2"
       error_is_none: true

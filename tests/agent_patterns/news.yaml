@@ -97,7 +97,7 @@ patterns:
     description: "Reuters World — 통신사 톤"
     url: "https://www.reuters.com/world/"
     query: "latest world news"
-    live: required
+    live: optional       # 2026-06-05: anti-bot — 'empty markdown after extraction'
     assertions:
       n_chunks_returned: ">= 3"
       error_is_none: true
