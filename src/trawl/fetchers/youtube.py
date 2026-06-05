@@ -24,6 +24,37 @@ _BROWSER_FALLBACK_REQUIRED = "browser fallback required"
 
 _PATH_ID_RE = re.compile(r"^/(?:shorts|live)/([A-Za-z0-9_-]{11})(?:[/?#]|$)")
 
+# English variants tried first when choosing a transcript. Many videos
+# carry community-contributed manual subtitles in dozens of languages
+# whose order is arbitrary, so "first manual" can return e.g. Arabic for
+# an English video. English is the common lingua franca and the language
+# most queries/assertions expect; when absent we fall back to the
+# original-audio-language transcript (see _choose_transcript).
+_PREFERRED_LANGS = ("en", "en-US", "en-GB", "en-CA", "en-AU")
+
+
+def _choose_transcript(transcript_list):
+    """Pick the most useful transcript from a TranscriptList.
+
+    Order: (1) English (find_transcript prefers manual over generated
+    within the language), (2) the auto-generated transcript — reliably
+    in the original audio language, avoiding arbitrary manual
+    translations, (3) the first manual, (4) the first available.
+    """
+    from youtube_transcript_api._errors import NoTranscriptFound
+
+    try:
+        return transcript_list.find_transcript(_PREFERRED_LANGS)
+    except NoTranscriptFound:
+        pass
+    generated = [t for t in transcript_list if t.is_generated]
+    if generated:
+        return generated[0]
+    manual = [t for t in transcript_list if not t.is_generated]
+    if manual:
+        return manual[0]
+    return list(transcript_list)[0]
+
 
 def matches(url: str) -> bool:
     """Return True if `url` is a YouTube video URL the API fetcher handles."""
@@ -102,9 +133,7 @@ def fetch(url: str, *, allow_browser_fallback: bool = True) -> FetchResult:
     try:
         ytt = YouTubeTranscriptApi()
         transcript_list = ytt.list(video_id)
-        # Prefer manual subtitles over auto-generated; accept any language.
-        manual = [t for t in transcript_list if not t.is_generated]
-        chosen = manual[0] if manual else list(transcript_list)[0]
+        chosen = _choose_transcript(transcript_list)
         transcript = chosen.fetch()
         text = " ".join(snippet.text for snippet in transcript)
         if not text.strip():
