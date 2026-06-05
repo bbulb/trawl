@@ -104,6 +104,13 @@ mamba run -n trawl python tests/test_agent_patterns.py --regression
 `ref: <step_idx>` 만 지원 (MVP). 동적 capture/template (`{{chunks[0].text}}`)
 은 후속 PR.
 
+`op: profile_page` step은 **암묵적 성공 체크**를 받는다:
+`generate_profile()`이 `{ok: false, stage, error}` 를 반환하면 해당
+step이 assertion 없이도 실패로 기록된다 (silent failure가 다음 step의
+`profile_used` 실패로 둔갑하는 것을 방지). 프로파일 실패 자체를
+검증하려는 패턴은 `error_contains` assertion을 명시하면 암묵 체크가
+비활성화된다.
+
 ## ID 규칙
 
 `<primary_agent>_<topic>_<intent>` 형태. shard 안에서, 그리고 모든 shard
