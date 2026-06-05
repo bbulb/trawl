@@ -182,12 +182,17 @@ cases:
   # ---------- Repeating record structures ----------
 
   - id: wanted_jobs
-    description: "Wanted 프론트엔드 채용 목록 — <li.Card> × 20 반복 구조"
+    description: "Wanted 개발 채용 목록 — <li.Card> × 20 반복 구조"
     url: "https://www.wanted.co.kr/wdlist/518"
     query: "프론트엔드 개발자 채용 공고"
     ground_truth:
+      # 2026-06-05: wdlist/518 job titles drifted Korean -> English
+      # ("프론트엔드" -> "Front-end") and the list broadened past
+      # frontend-only. The Korean query still ranks "Front-end Chapter
+      # Lead" at rank 1, so retrieval is healthy; assert the page's
+      # current frontend spelling instead of the dropped Korean term.
       must_contain_all:
-        - "프론트엔드"
+        - "Front-end"
       must_contain_any:
         - "경력"
         - "신입"
