@@ -18,7 +18,8 @@ Invoke:
     python tests/test_agent_patterns.py --dry-run               # schema only
     python tests/test_agent_patterns.py --baseline              # write budgets
     python tests/test_agent_patterns.py --regression            # +20% gate
-    python tests/test_agent_patterns.py --repeats 3             # p95 latency
+    python tests/test_agent_patterns.py --repeats 3             # p95 latency (single-op only;
+                                                                # multi-op scripts always run once)
     python tests/test_agent_patterns.py --no-isolation          # reuse ~/.cache/trawl
 
 Live runs default to a fresh temp-dir trawl state (profiles, visit
@@ -346,6 +347,19 @@ def _evaluate_budgets(
 # Pattern runner ------------------------------------------------------
 
 
+def _effective_repeats(pattern: Pattern, repeats: int) -> int:
+    """Multi-op patterns always run once.
+
+    Their steps are a stateful script (visit counts, C8 cache hits,
+    profile creation accumulate step to step), so repeating each step
+    N times corrupts the scenario the assertions encode — e.g. step 0
+    fetched 3 times pushes the visit count past the suggest_profile
+    threshold before step 1 even runs. Latency p95 via --repeats is a
+    single-op concern; multi-op budgets assert on the one scripted run.
+    """
+    return 1 if pattern.is_multi_op else repeats
+
+
 def _run_pattern(
     pattern: Pattern,
     *,
@@ -353,6 +367,7 @@ def _run_pattern(
     repeats: int,
     verbose: bool,
 ) -> PatternOutcome:
+    repeats = _effective_repeats(pattern, repeats)
     outcome = PatternOutcome(
         id=pattern.id,
         shard=pattern.shard,
@@ -381,10 +396,8 @@ def _run_pattern(
         for step in steps:
             url, query = _resolve_step(step, outcome.steps)
 
-            # Repeat measurements (only meaningful for live + the final step
-            # of single-op patterns; for multi-op we only repeat the last
-            # step that has a budget — keep it simple and repeat each step
-            # the same way).
+            # Repeat measurements for latency p95 (single-op patterns
+            # only — _effective_repeats clamps multi-op to one run).
             measurements: dict[str, Any] = {}
             elapsed_samples: list[int] = []
             for _ in range(repeats):
@@ -502,7 +515,47 @@ def _write_results(outcomes: list[PatternOutcome], *, results_dir: Path) -> Path
             continue
         (fdir / f"{o.id}.md").write_text(_render_failure(o), encoding="utf-8")
 
+    # budget_diff.md — latency vs baseline.json (when a baseline exists)
+    diff = _render_budget_diff(outcomes)
+    if diff:
+        (out_dir / "budget_diff.md").write_text(diff, encoding="utf-8")
+
     return out_dir
+
+
+def _render_budget_diff(outcomes: list[PatternOutcome]) -> str | None:
+    """Markdown table of per-pattern latency vs baseline, worst first."""
+    baseline = _load_baseline()
+    if not baseline:
+        return None
+    rows: list[tuple[float, str]] = []
+    for o in outcomes:
+        prev = baseline.get(o.id)
+        prev_ms = int(prev.get("total_ms_p95") or 0) if prev else 0
+        if prev_ms <= 0 or o.total_ms_p95 <= 0:
+            continue
+        delta_pct = (o.total_ms_p95 - prev_ms) / prev_ms * 100
+        rows.append(
+            (
+                delta_pct,
+                f"| `{o.id}` | {prev_ms}ms | {o.total_ms_p95}ms | {delta_pct:+.1f}% |",
+            )
+        )
+    if not rows:
+        return None
+    rows.sort(key=lambda r: r[0], reverse=True)
+    lines = [
+        "# Budget diff vs baseline",
+        "",
+        f"- {len(rows)} pattern(s) present in both this run and baseline.json",
+        f"- regression gate: +{int((REGRESSION_TOLERANCE - 1) * 100)}% (--regression)",
+        "",
+        "| pattern | baseline | current | delta |",
+        "|---|---|---|---|",
+        *(r[1] for r in rows),
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def _outcome_to_dict(o: PatternOutcome) -> dict:
@@ -697,6 +750,13 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_isolation:
         iso_root = _setup_isolation()
         print(f"isolated trawl state: {iso_root}")
+
+    if args.repeats > 1 and any(p.is_multi_op for p in selected):
+        n_multi = sum(1 for p in selected if p.is_multi_op)
+        print(
+            f"note: --repeats={args.repeats} applies to single-op patterns only; "
+            f"{n_multi} multi-op pattern(s) run once (stateful step scripts)"
+        )
 
     outcomes = [
         _run_pattern(p, dry_run=False, repeats=args.repeats, verbose=args.verbose) for p in selected
