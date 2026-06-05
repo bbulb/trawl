@@ -22,12 +22,16 @@ patterns:
   - id: openclaw_dashboard_warm_profile_naver_finance
     primary_agent: [openclaw]
     category: repeat_visits
-    description: "네이버 금융 시가총액 페이지 3회 visit → suggest_profile → profile_page → fast"
+    description: "네이버 금융 거래량 상위 페이지 3회 visit → suggest_profile → profile_page → fast"
     live: required
     steps:
       - op: fetch_page
-        url: "https://finance.naver.com/sise/sise_market_sum.naver"
-        query: "코스피 시가총액 상위 종목"
+        # 2026-06-05: was sise_market_sum.naver, but finance.yaml visits
+        # that URL earlier in a full run, pre-seeding the visit count and
+        # breaking step 1's `suggest_profile: false` (off-by-one).
+        # Stateful patterns must use catalog-unique URLs (README rule).
+        url: "https://finance.naver.com/sise/sise_quant.naver"
+        query: "코스피 거래량 상위 종목"
         assertions:
           suggest_profile: false
           error_is_none: true
@@ -57,12 +61,16 @@ patterns:
   - id: hermes_dashboard_warm_profile_hn_front
     primary_agent: [hermes]
     category: repeat_visits
-    description: "Hacker News front page warm-profile 시나리오"
+    description: "Hacker News /best warm-profile 시나리오"
     live: required
     steps:
       - op: fetch_page
-        url: "https://news.ycombinator.com/"
-        query: "today's top tech stories"
+        # 2026-06-05: was the HN front page, but news.yaml visits that
+        # URL earlier in a full run, pre-seeding the visit count (the
+        # pattern only survived by not asserting suggest_profile on
+        # step 1). Stateful patterns must use catalog-unique URLs.
+        url: "https://news.ycombinator.com/best"
+        query: "best recent tech stories"
         assertions:
           suggest_profile: false
       - op: fetch_page
