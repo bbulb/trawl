@@ -119,8 +119,13 @@ patterns:
         url: "https://finance.naver.com/item/main.naver?code=000660"   # SK하이닉스
         query: "SK하이닉스 현재가"
         assertions:
+          # 2026-06-05: dropped `path: "profile_retrieval"` — path encodes
+          # chunk-count routing (<= PROFILE_DIRECT_CHUNK_THRESHOLD chunks
+          # -> profile_direct), not whether a transfer happened. Under the
+          # harness's isolated state only code=005930 was profiled, so
+          # profile_used: true on this never-profiled sibling URL is
+          # itself the transfer proof.
           profile_used: true
-          path: "profile_retrieval"
           chunks_contain_any: ["SK하이닉스", "000660"]
 
   - id: claude_code_pypi_host_transfer

@@ -16,6 +16,7 @@ No network, no pipeline imports — these are pure-function checks.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -347,3 +348,20 @@ def test_status_fail_when_required_pattern_fails():
 
 def test_status_skip_when_optional_pattern_fails():
     assert _outcome("optional", failing=True).status == "SKIP"
+
+
+# ---------- state isolation
+
+
+def test_setup_isolation_points_all_state_env_at_temp_dir(monkeypatch):
+    from test_agent_patterns import _ISOLATION_ENV, _setup_isolation
+
+    for var in _ISOLATION_ENV:
+        monkeypatch.delenv(var, raising=False)
+    root = _setup_isolation()
+    try:
+        for var, rel in _ISOLATION_ENV.items():
+            assert os.environ[var] == str(root / rel)
+    finally:
+        for var in _ISOLATION_ENV:
+            os.environ.pop(var, None)
