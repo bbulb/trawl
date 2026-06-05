@@ -400,3 +400,67 @@ def test_profile_step_missing_ok_key_passes():
     from test_agent_patterns import _check_profile_step
 
     assert _check_profile_step({}, {}) == []
+
+
+# ---------- multi-op repeats clamp + budget diff
+
+
+def _mk(raw_extra: dict):
+    raw = {
+        "id": "t2",
+        "primary_agent": ["hermes"],
+        "category": "single_fetch",
+        "description": "x",
+    }
+    raw.update(raw_extra)
+    return parse_pattern(raw, shard="s")
+
+
+def test_effective_repeats_clamps_multi_op_to_one():
+    from test_agent_patterns import _effective_repeats
+
+    multi = _mk(
+        {
+            "category": "repeat_visits",
+            "steps": [
+                {"op": "fetch_page", "url": "https://example.com", "query": "q"},
+                {"op": "fetch_page", "ref": 0},
+            ],
+        }
+    )
+    single = _mk({"url": "https://example.com", "query": "q"})
+    assert _effective_repeats(multi, 3) == 1
+    assert _effective_repeats(single, 3) == 3
+    assert _effective_repeats(single, 1) == 1
+
+
+def test_render_budget_diff_orders_worst_first(monkeypatch, tmp_path):
+    import test_agent_patterns as harness
+
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        '{"a": {"total_ms_p95": 1000}, "b": {"total_ms_p95": 1000}}', encoding="utf-8"
+    )
+    monkeypatch.setattr(harness, "BASELINE_PATH", baseline)
+
+    def _o(pid, ms):
+        return harness.PatternOutcome(
+            id=pid, shard="s", category="single_fetch", repeats=1, total_ms_p95=ms
+        )
+
+    diff = harness._render_budget_diff([_o("a", 1500), _o("b", 800), _o("c", 999)])
+    assert diff is not None
+    lines = [ln for ln in diff.splitlines() if ln.startswith("| `")]
+    assert lines[0].startswith("| `a` | 1000ms | 1500ms | +50.0%")
+    assert lines[1].startswith("| `b` | 1000ms | 800ms | -20.0%")
+    assert all("`c`" not in ln for ln in lines)
+
+
+def test_render_budget_diff_none_without_baseline(monkeypatch, tmp_path):
+    import test_agent_patterns as harness
+
+    monkeypatch.setattr(harness, "BASELINE_PATH", tmp_path / "missing.json")
+    o = harness.PatternOutcome(
+        id="a", shard="s", category="single_fetch", repeats=1, total_ms_p95=5
+    )
+    assert harness._render_budget_diff([o]) is None
