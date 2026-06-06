@@ -148,7 +148,11 @@ patterns:
       n_chunks_returned: ">= 3"
       error_is_none: true
     budgets:
-      total_ms_p95: 18000
+      # 2026-06-06: nba.com is a heavy SPA with high latency variance
+      # (observed 12456 ms then 18371 ms across runs). 18000 was too
+      # tight to absorb the spike; raise to the 22000 ms used by the
+      # other slowest sports pages.
+      total_ms_p95: 22000
 
   # ============================================================
   # E-스포츠 (2)
