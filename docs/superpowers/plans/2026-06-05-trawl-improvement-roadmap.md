@@ -150,9 +150,22 @@ white-on-white) → 삭제 아닌 `[SUSPICIOUS_HIDDEN]` annotation + 로깅.
 **Gate.** injection fixture가 marker를 생성. 정상 본문 parity 15/15 +
 coding 24/24 회귀 0. 기본 경로 latency 영향 < 5%.
 
-### S3. Query-type aware fusion 가중 (R3 잔여) — `status: proposed`
+### S3. Query-type aware fusion 가중 (R3 잔여) — `status: closed — already implemented + validated-neutral (2026-06-06)`
 
-**작업.** rule-based 쿼리 분류(identifier/code 패턴 vs 개념 질의 —
+**결론 (2026-06-06).** 이 피처는 이미 구현·테스트·default-on 상태였음
+(`b81d57b`, 2026-04-27, 로드맵 작성 이전 — R1/R2/R4/C7와 같은 stale
+케이스). 미실행이던 A/B만 수행: `benchmarks/query_aware_fusion_ab.py`로
+reader_comparison 6케이스(identifier 3/concept 3) weighted↔equal RRF
+격리 측정. 결과 **end-to-end neutral (net facts Δ +0, top1 1/6 marginal)**,
+순수 fusion 단계에서도 identifier 케이스는 weighted=equal로 **동일**
+(rankers concur → 5× 스윙 무효), rerank가 차이를 가림. Gate(coding net
+≥ +1) 미충족. 결정: **그대로 유지**(neutral·tested·harmless, retrieval
+hot-path 가드레일), 토글 미추가(unrequested config), 단순화/튜닝 안 함.
+상세: `docs/superpowers/specs/2026-06-06-query-aware-fusion-validation.md`.
+재spike 금지(새 신호 없는 한): dense·BM25가 상단에서 실제로 불일치하는
+대형 페이지 코퍼스 또는 reranker 제거 결정.
+
+**(원래 제안, 참고용)** rule-based 쿼리 분류(identifier/code 패턴 vs 개념 질의 —
 LLM 호출 없음) → identifier일 때 RRF에서 BM25 rank 가중 상향.
 `TRAWL_HYBRID_QUERY_WEIGHTS=1` 토글로 A/B.
 
