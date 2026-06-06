@@ -180,9 +180,24 @@ Benchmarking Retrieval Strategies for Text-and-Table Documents"
 나머지 2026년 arXiv ID들은 web 조사 출처로 spot-check 미실시 —
 해당 spike 착수 시 원문 확인 선행.
 
-### S4. PDF backend 측정 실행 (R5 완결) — `status: proposed`
+### S4. PDF backend 측정 실행 (R5 완결) — `status: closed — keep PyMuPDF (2026-06-06)`
 
-**작업.** 이미 있는 `benchmarks/pdf_backend_comparison.py`를 실행해
+**결론 (2026-06-06, staged).** PyMuPDF 유지, structured backend 미채택,
+torch급 의존성 미설치. 단계적으로 진행: 대표 표-heavy fixture를 먼저
+만들어 PyMuPDF end-to-end(`fetch_relevant`)로 검증 → 실패 시에만 Docling
+설치. **트리거 미충족** — 대표 논문 results 표 3종(Transformer BLEU
+28.4/41.8, LoRA WikiSQL/MNLI, BERT GLUE)은 PyMuPDF로 전부 retrieval
+성공. 유일한 실패는 BGE-M3 18-언어 dense 매트릭스인데, 추출 레벨에선
+recall 1.0(markdown에 값 존재)이라 **추출 누락이 아니라 retrieval 랭킹
++ 쿼리 어휘(Korean vs ISO코드 ko) 문제** → extraction 백엔드 교체로 해결
+안 됨. 게다가 harness의 `table_hit`은 trawl 운영 경로가 안 쓰는
+`tables` 필드 채점이라 채택해도 `fetch_relevant` 무영향(table-aware
+chunking은 별도 대형 스코프). 재spike 조건: 대표적(비병리적) PDF에서
+PyMuPDF markdown이 표 사실을 end-to-end로 누락 + table-aware chunking
+구축 결정. fixture 4+1건은 `benchmarks/pdf_backend_cases.yaml`에 durable
+하게 추가. 상세: `docs/superpowers/specs/2026-06-06-pdf-backend-comparison-outcome.md`.
+
+**(원래 작업, 참고용)** 이미 있는 `benchmarks/pdf_backend_comparison.py`를 실행해
 PyMuPDF vs Docling vs MarkItDown vs Unstructured vs MinerU 측정,
 outcome note 작성 후 채택/기각. MinerU는 라이선스 원문 확인 선행.
 채택 시에도 optional extra로만 (기본 의존성 불변).
