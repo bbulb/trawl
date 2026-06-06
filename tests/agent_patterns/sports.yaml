@@ -83,8 +83,13 @@ patterns:
   - id: hermes_premierleague_table
     primary_agent: [hermes, claude_code]
     category: single_fetch
-    description: "EPL standings — Premier League official"
-    url: "https://www.premierleague.com/tables"
+    description: "EPL standings — ESPN soccer table"
+    # 2026-06-06: premierleague.com/tables is a consent-walled SPA;
+    # trawl's stealth gets the cookie-consent modal, not the table (all
+    # chunks were "Performance Cookies"/"checkbox label" boilerplate).
+    # ESPN's standings render the table accessibly (verified: all five
+    # team names present, 10 chunks). Same test intent, extractable source.
+    url: "https://www.espn.com/soccer/standings/_/league/eng.1"
     query: "current Premier League table"
     live: required
     assertions:
