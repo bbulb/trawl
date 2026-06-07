@@ -77,3 +77,71 @@ def test_fetch_fallback_on_invalid_id():
     result = fetch("https://www.example.com/page")
     assert not result.ok
     assert "invalid" in (result.error or "").lower()
+
+
+# ---------- transcript language selection (_choose_transcript)
+
+
+class _FakeTranscript:
+    def __init__(self, language_code, is_generated):
+        self.language_code = language_code
+        self.is_generated = is_generated
+
+
+class _FakeTranscriptList:
+    """Mimics youtube_transcript_api's TranscriptList: iterable +
+    find_transcript(langs) raising NoTranscriptFound when absent."""
+
+    def __init__(self, transcripts):
+        self._transcripts = transcripts
+
+    def __iter__(self):
+        return iter(self._transcripts)
+
+    def find_transcript(self, language_codes):
+        from youtube_transcript_api._errors import NoTranscriptFound
+
+        for code in language_codes:
+            for t in self._transcripts:
+                if t.language_code == code:
+                    return t
+        raise NoTranscriptFound("vid", language_codes, self._transcripts)
+
+
+def test_choose_transcript_prefers_english_over_arbitrary_manual():
+    # The 3blue1brown shape: manual subtitles in many languages, Arabic
+    # first. English must win over "first manual".
+    from trawl.fetchers.youtube import _choose_transcript
+
+    tl = _FakeTranscriptList(
+        [
+            _FakeTranscript("ar", False),
+            _FakeTranscript("zh", False),
+            _FakeTranscript("en", False),
+            _FakeTranscript("en", True),
+        ]
+    )
+    assert _choose_transcript(tl).language_code == "en"
+
+
+def test_choose_transcript_no_english_prefers_generated_original():
+    # Korean lecture: no English; the generated transcript is the
+    # original audio language, preferred over arbitrary manual translations.
+    from trawl.fetchers.youtube import _choose_transcript
+
+    tl = _FakeTranscriptList(
+        [
+            _FakeTranscript("ar", False),  # arbitrary manual translation
+            _FakeTranscript("ko", True),  # generated, original language
+        ]
+    )
+    chosen = _choose_transcript(tl)
+    assert chosen.language_code == "ko"
+    assert chosen.is_generated
+
+
+def test_choose_transcript_falls_back_to_first_manual():
+    from trawl.fetchers.youtube import _choose_transcript
+
+    tl = _FakeTranscriptList([_FakeTranscript("ja", False), _FakeTranscript("fr", False)])
+    assert _choose_transcript(tl).language_code == "ja"

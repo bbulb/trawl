@@ -18,12 +18,46 @@ import logging
 import os
 import time
 from dataclasses import asdict, dataclass, field
+from inspect import Parameter, signature
 from urllib.parse import urlsplit
 
-from . import chunking, enrichment, extraction, fetch_cache, hyde, reranking, retrieval, telemetry
-from .fetchers import github, passthrough, pdf, playwright, stackexchange, wikipedia, youtube
+from . import (
+    chunking,
+    contextual,
+    enrichment,
+    extraction,
+    fetch_cache,
+    hyde,
+    reranking,
+    retrieval,
+    sanitize,
+    telemetry,
+)
+from .fetchers import (
+    github,
+    passthrough,
+    pdf,
+    playwright,
+    scrapling,
+    stackexchange,
+    wikipedia,
+    youtube,
+)
 
 logger = logging.getLogger(__name__)
+
+BROWSER_FALLBACK_REQUIRED = "browser fallback required"
+
+ANTI_BOT_MARKERS: tuple[str, ...] = (
+    "cf-challenge",
+    "cloudflare",
+    "turnstile",
+    "checking your browser",
+    "verify you are human",
+    "enable javascript and cookies",
+    "attention required",
+    "access denied",
+)
 
 
 PROFILE_DIRECT_CHUNK_THRESHOLD = int(
@@ -78,6 +112,7 @@ class PipelineResult:
     hyde_text: str
     chunks: list[dict]
     error: str | None = None
+    warnings: list[str] = field(default_factory=list)
     # New fields for the profile feature. All have safe defaults so
     # existing callers that construct PipelineResult by hand keep working.
     profile_used: bool = False
@@ -108,11 +143,23 @@ class PipelineResult:
     # `TRAWL_CHUNK_BUDGET` (default 100) or the budget is disabled
     # (`TRAWL_CHUNK_BUDGET=0`). 0 for error / passthrough paths.
     n_chunks_embedded: int = 0
+    # Document embedding cache counters for retrieval observability.
+    # These count chunk/document embedding cache lookups only; query
+    # embeddings are intentionally uncached in the current implementation.
+    embed_cache_hits: int = 0
+    embed_cache_misses: int = 0
     # 0.4.2 — defensive chunk-window cap telemetry. True when rerank()'s
     # pre-POST cap (TRAWL_RERANK_MAX_DOCS / TRAWL_RERANK_MAX_CHARS)
     # dropped documents or truncated any doc. Stays False when the cap
     # is disabled or when the payload was already under the limits.
     rerank_capped: bool = False
+    # Contextual retrieval telemetry for ranking-only prefixes.
+    contextual_retrieval_used: bool = False
+    context_prefix_chars_total: int = 0
+    context_prefix_chars_avg: float = 0.0
+    # R3 — retrieval fusion diagnostics. Contains chunk indices, raw ranks,
+    # and per-ranker fusion contributions only; never raw chunk text.
+    retrieval_diagnostics: dict = field(default_factory=dict)
 
     @property
     def output_chars(self) -> int:
@@ -147,6 +194,11 @@ def _is_pdf_url(url: str) -> bool:
     return lower.endswith(".pdf") or "/pdf/" in lower
 
 
+def _is_youtube_url(url: str) -> bool:
+    """Backward-compatible URL predicate retained for older callers/tests."""
+    return youtube.matches(url)
+
+
 # (fetcher_module, native_fetcher_name) — each module exposes `matches(url) -> bool`
 # and `fetch(url) -> FetchResult`. Checked in order; first match wins.
 _API_FETCHERS = [
@@ -157,14 +209,66 @@ _API_FETCHERS = [
 ]
 
 
-def _chunk_to_dict(chunk, *, score: float | None) -> dict:
-    return {
+def _chunk_to_dict(chunk, *, score: float | None, title: str = "") -> dict:
+    payload = {
         "text": chunk.text,
         "heading": chunk.heading,
+        "heading_path": list(getattr(chunk, "heading_path", []) or []),
+        "title": title,
         "char_count": chunk.char_count,
         "chunk_index": chunk.chunk_index,
         "score": score,
     }
+    if getattr(chunk, "extractor", None):
+        payload["extractor"] = chunk.extractor
+    if getattr(chunk, "source_url", None):
+        payload["source_url"] = chunk.source_url
+    if getattr(chunk, "source_selector", None):
+        payload["source_selector"] = chunk.source_selector
+    if getattr(chunk, "source_xpath", None):
+        payload["source_xpath"] = chunk.source_xpath
+    if getattr(chunk, "char_span", None) is not None:
+        payload["char_span"] = list(chunk.char_span)
+    return payload
+
+
+def _scan_injection(chunk_dicts: list[dict], *, html: str | None) -> list[str]:
+    """Annotate chunk dicts for injection signals; return scan warnings.
+
+    No-op (returns []) when the scan is disabled via
+    ``TRAWL_INJECTION_SCAN=0`` or on any unexpected error — the scan
+    must never break a fetch.
+    """
+    if not sanitize.is_enabled():
+        return []
+    try:
+        _, warnings = sanitize.annotate_chunks(chunk_dicts, html=html)
+        return warnings
+    except Exception as e:  # noqa: BLE001
+        logger.warning("injection scan failed, skipping: %s", e)
+        return []
+
+
+def _retrieval_diagnostics(result: retrieval.RetrievalResult) -> dict:
+    if not result.fusion_weights and not result.rank_diagnostics:
+        return {}
+    rankers = list(result.fusion_weights or {})
+    diagnostics = {
+        "mode": result.retrieval_mode,
+        "query_type": result.query_type,
+        "weights": result.fusion_weights or {},
+        "rankers": rankers,
+        "chunks": result.rank_diagnostics or [],
+    }
+    if result.sparse_rank_error:
+        diagnostics["sparse_error"] = result.sparse_rank_error
+    return diagnostics
+
+
+def _contextual_batch(chunks: list[chunking.Chunk], page_title: str, query: str = ""):
+    if not contextual.should_use_contextual(query=query, chunks=chunks, page_title=page_title):
+        return None
+    return contextual.build_contextual_texts(chunks, page_title=page_title)
 
 
 def _decode_passthrough_body(body: bytes, content_type: str | None) -> str:
@@ -202,9 +306,14 @@ def _build_passthrough_result(
     chunk = {
         "text": text,
         "heading": None,
+        "heading_path": [],
+        "title": "",
         "char_count": len(text),
         "chunk_index": 0,
         "score": None,
+        "source_url": url,
+        "extractor": fetcher_name,
+        "char_span": [0, len(text)],
     }
     return PipelineResult(
         url=url,
@@ -310,6 +419,7 @@ def _error_result(
         "hyde_text": "",
         "chunks": [],
         "error": error,
+        "warnings": [],
         "path": "error",
     }
     fields.update(overrides)
@@ -343,8 +453,15 @@ def _build_profile_result(
     Shared by the exact-match fast path and the host-transfer path.
     """
     t_chunk = time.monotonic()
-    md = extraction.html_to_markdown(subtree_html)
-    chunks = chunking.chunk_markdown(md)
+    extracted = extraction.extract_html(subtree_html, query=query)
+    md = extracted.markdown
+    chunks = chunking.chunk_markdown(
+        md,
+        extractor=extracted.extractor,
+        source_url=url,
+        source_selector=profile.mapper.main_selector or extracted.source_selector,
+        source_xpath=extracted.source_xpath,
+    )
     chunk_ms = int((time.monotonic() - t_chunk) * 1000)
 
     # Profile path operates on a subtree; the full-page <title> isn't
@@ -371,22 +488,35 @@ def _build_profile_result(
     rerank_ms = 0
     rerank_capped = False
     n_chunks_embedded = 0
+    embed_cache_hits = 0
+    embed_cache_misses = 0
+    retrieval_warning = None
+    context_batch = None
     if len(chunks) <= PROFILE_DIRECT_CHUNK_THRESHOLD:
         path = "profile_direct"
-        retrieved_dicts = [_chunk_to_dict(c, score=None) for c in chunks]
+        retrieved_dicts = [_chunk_to_dict(c, score=None, title=page_title) for c in chunks]
         retrieval_ms = 0
     elif query:
         path = "profile_retrieval"
         t_ret = time.monotonic()
         chosen_k = _adaptive_k(len(chunks), override=k)
         retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
-        hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "0") == "1"
+        hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "1") != "0"
         chunk_budget = _read_chunk_budget()
+        context_batch = _contextual_batch(chunks, page_title, query or "")
         retrieved = retrieval.retrieve(
-            query, chunks, k=retrieve_k, hybrid=hybrid_flag, chunk_budget=chunk_budget
+            query,
+            chunks,
+            k=retrieve_k,
+            hybrid=hybrid_flag,
+            chunk_budget=chunk_budget,
+            context_texts=context_batch.texts if context_batch else None,
         )
         retrieval_ms = int((time.monotonic() - t_ret) * 1000)
         n_chunks_embedded = retrieved.n_chunks_embedded
+        embed_cache_hits = retrieved.embed_cache_hits
+        embed_cache_misses = retrieved.embed_cache_misses
+        retrieval_warning = retrieved.warning
         if retrieved.error:
             return PipelineResult(
                 **base_kwargs,
@@ -394,8 +524,17 @@ def _build_profile_result(
                 total_ms=int((time.monotonic() - t_start) * 1000),
                 chunks=[],
                 error=retrieved.error,
+                warnings=[retrieval_warning] if retrieval_warning else [],
                 path=path,
                 n_chunks_embedded=retrieved.n_chunks_embedded,
+                embed_cache_hits=retrieved.embed_cache_hits,
+                embed_cache_misses=retrieved.embed_cache_misses,
+                contextual_retrieval_used=bool(context_batch),
+                context_prefix_chars_total=(
+                    context_batch.prefix_chars_total if context_batch else 0
+                ),
+                context_prefix_chars_avg=(context_batch.prefix_chars_avg if context_batch else 0.0),
+                retrieval_diagnostics=_retrieval_diagnostics(retrieved),
             )
         if use_rerank and retrieved.scored:
             t_rr = time.monotonic()
@@ -405,11 +544,13 @@ def _build_profile_result(
             rerank_ms = int((time.monotonic() - t_rr) * 1000)
         else:
             final_scored = retrieved.scored
-        retrieved_dicts = [_chunk_to_dict(s.chunk, score=s.score) for s in final_scored]
+        retrieved_dicts = [
+            _chunk_to_dict(s.chunk, score=s.score, title=page_title) for s in final_scored
+        ]
         emitted_chunks = [s.chunk for s in final_scored]
     else:
         path = "profile_direct_large"
-        retrieved_dicts = [_chunk_to_dict(c, score=None) for c in chunks]
+        retrieved_dicts = [_chunk_to_dict(c, score=None, title=page_title) for c in chunks]
         retrieval_ms = 0
         emitted_chunks = list(chunks)
 
@@ -417,15 +558,26 @@ def _build_profile_result(
         # Direct path returned all chunks above; mirror them for enrichment.
         emitted_chunks = list(chunks)
 
+    scan_warnings = _scan_injection(retrieved_dicts, html=subtree_html)
+    profile_warnings = ([retrieval_warning] if retrieval_warning else []) + scan_warnings
+
     return PipelineResult(
         **base_kwargs,
         retrieval_ms=retrieval_ms,
         total_ms=int((time.monotonic() - t_start) * 1000),
         chunks=retrieved_dicts,
+        warnings=profile_warnings,
         path=path,
         rerank_used=use_rerank and path == "profile_retrieval",
         rerank_ms=rerank_ms,
         rerank_capped=rerank_capped,
+        contextual_retrieval_used=(bool(context_batch) if path == "profile_retrieval" else False),
+        context_prefix_chars_total=(
+            context_batch.prefix_chars_total if path == "profile_retrieval" and context_batch else 0
+        ),
+        context_prefix_chars_avg=(
+            context_batch.prefix_chars_avg if path == "profile_retrieval" and context_batch else 0.0
+        ),
         excerpts=enrichment.extract_excerpts(emitted_chunks),
         outbound_links=enrichment.extract_outbound_links(emitted_chunks),
         page_entities=enrichment.extract_page_entities(
@@ -433,6 +585,11 @@ def _build_profile_result(
         ),
         chain_hints=enrichment.derive_chain_hints(url),
         n_chunks_embedded=n_chunks_embedded,
+        embed_cache_hits=embed_cache_hits,
+        embed_cache_misses=embed_cache_misses,
+        retrieval_diagnostics=_retrieval_diagnostics(retrieved)
+        if path == "profile_retrieval"
+        else {},
     )
 
 
@@ -622,6 +779,8 @@ def fetch_relevant(
     k: int | None = None,
     use_hyde: bool = False,
     use_rerank: bool = True,
+    allow_browser: bool = True,
+    record_telemetry: bool = True,
 ) -> PipelineResult:
     """Public entry point. See _fetch_relevant_impl for logic.
 
@@ -634,8 +793,10 @@ def fetch_relevant(
         k=k,
         use_hyde=use_hyde,
         use_rerank=use_rerank,
+        allow_browser=allow_browser,
     )
-    telemetry.record(result)
+    if record_telemetry:
+        telemetry.record(result)
     return result
 
 
@@ -646,6 +807,7 @@ def _fetch_relevant_impl(
     k: int | None = None,
     use_hyde: bool = False,
     use_rerank: bool = True,
+    allow_browser: bool = True,
 ) -> PipelineResult:
     """Fetch `url`, return the main content.
 
@@ -679,7 +841,7 @@ def _fetch_relevant_impl(
         track_visit = None
         get_visit_count = None
 
-    if profile is not None and profile.mapper.main_selector:
+    if allow_browser and profile is not None and profile.mapper.main_selector:
         try:
             result = _profile_fast_path(
                 url,
@@ -697,19 +859,20 @@ def _fetch_relevant_impl(
         # Drift → fall through to transfer path.
 
     # Host-transfer path (exact miss or exact drift).
-    try:
-        transfer_result = _profile_transfer_path(
-            url,
-            query,
-            k=k,
-            t_start=t_start,
-            use_rerank=use_rerank,
-        )
-    except Exception as e:
-        logger.warning("profile transfer path raised, falling through: %s", e)
-        transfer_result = None
-    if transfer_result is not None:
-        return transfer_result
+    if allow_browser:
+        try:
+            transfer_result = _profile_transfer_path(
+                url,
+                query,
+                k=k,
+                t_start=t_start,
+                use_rerank=use_rerank,
+            )
+        except Exception as e:
+            logger.warning("profile transfer path raised, falling through: %s", e)
+            transfer_result = None
+        if transfer_result is not None:
+            return transfer_result
 
     # Passthrough short-circuit: structured-data URLs (JSON, XML, RSS, Atom)
     # don't need a query — the raw bytes are the answer. Check before the
@@ -742,6 +905,7 @@ def _fetch_relevant_impl(
         use_hyde=use_hyde,
         use_rerank=use_rerank,
         t_start=t_start,
+        allow_browser=allow_browser,
     )
 
     # Populate lazy suggest_profile hint on the fallback path.
@@ -755,24 +919,155 @@ def _fetch_relevant_impl(
     return result
 
 
-def _fetch_html(url: str) -> tuple[object, str, str]:
+def _fetch_html(
+    url: str, query: str | None = None, *, allow_browser: bool = True
+) -> tuple[object, extraction.ExtractedContent, str]:
     """Run the API-fetcher chain, falling back to Playwright + Trafilatura.
 
-    Returns (fetched, markdown, fetcher_name). `fetched` is whatever
+    Returns (fetched, extracted, fetcher_name). `fetched` is whatever
     the chosen fetcher produced; callers use its `.ok`, `.error`,
     `.elapsed_ms`, and (for Playwright) `.content_type`.
     """
+    t0 = time.monotonic()
     for fetcher_mod, native_name in _API_FETCHERS:
         if fetcher_mod.matches(url):
-            fetched = fetcher_mod.fetch(url)
+            try:
+                params = signature(fetcher_mod.fetch).parameters.values()
+                accepts_browser_flag = any(
+                    p.kind == Parameter.VAR_KEYWORD or p.name == "allow_browser_fallback"
+                    for p in params
+                )
+            except (TypeError, ValueError):
+                accepts_browser_flag = False
+            if accepts_browser_flag:
+                fetched = fetcher_mod.fetch(url, allow_browser_fallback=allow_browser)
+            else:
+                fetched = fetcher_mod.fetch(url)
             if fetched.fetcher == native_name:
-                return fetched, fetched.markdown, native_name
+                return (
+                    fetched,
+                    extraction.ExtractedContent(
+                        markdown=fetched.markdown,
+                        extractor=native_name,
+                        source_selector=None,
+                        source_xpath=None,
+                    ),
+                    native_name,
+                )
             # API fetcher fell back to playwright — re-extract.
-            markdown = extraction.html_to_markdown(fetched.html) if fetched.ok else ""
-            return fetched, markdown, "playwright+trafilatura"
+            extracted = extraction.extract_html(fetched.html, query=query) if fetched.ok else None
+            return _maybe_scrapling_fallback(
+                url,
+                query,
+                fetched,
+                extracted or extraction.ExtractedContent(markdown="", extractor=""),
+                "playwright+trafilatura",
+            )
+    if not allow_browser:
+        fetched = playwright.make_error_result(
+            url,
+            "playwright+trafilatura",
+            t0,
+            f"{BROWSER_FALLBACK_REQUIRED}: no browser-free fetcher matched",
+        )
+        return (
+            fetched,
+            extraction.ExtractedContent(markdown="", extractor=""),
+            "playwright+trafilatura",
+        )
     fetched = playwright.fetch(url)
-    markdown = extraction.html_to_markdown(fetched.html) if fetched.ok else ""
-    return fetched, markdown, "playwright+trafilatura"
+    extracted = extraction.extract_html(fetched.html, query=query) if fetched.ok else None
+    return _maybe_scrapling_fallback(
+        url,
+        query,
+        fetched,
+        extracted or extraction.ExtractedContent(markdown="", extractor=""),
+        "playwright+trafilatura",
+    )
+
+
+def _maybe_scrapling_fallback(
+    url: str,
+    query: str | None,
+    fetched: object,
+    extracted: extraction.ExtractedContent,
+    fetcher_name: str,
+) -> tuple[object, extraction.ExtractedContent, str]:
+    reason = _scrapling_fallback_reason(fetched, extracted)
+    if reason is None or not scrapling.is_enabled():
+        return fetched, extracted, fetcher_name
+
+    mode = os.environ.get("TRAWL_SCRAPLING_MODE", "auto")
+    recovered = scrapling.fetch(url, mode=mode, reason=reason)
+    if not recovered.ok:
+        logger.info("Scrapling fallback failed for %s: %s", url, recovered.error)
+        return fetched, extracted, fetcher_name
+
+    recovered_extracted = extraction.extract_html(recovered.html, query=query)
+    if not recovered_extracted.markdown.strip():
+        logger.info("Scrapling fallback produced empty markdown for %s", url)
+        return fetched, extracted, fetcher_name
+
+    return recovered, recovered_extracted, f"{recovered.fetcher}+trafilatura"
+
+
+def _scrapling_fallback_reason(
+    fetched: object,
+    extracted: extraction.ExtractedContent,
+) -> str | None:
+    html = str(getattr(fetched, "html", "") or "")
+    markdown = extracted.markdown or ""
+    combined = f"{html}\n{markdown}".lower()
+    if any(marker in combined for marker in ANTI_BOT_MARKERS):
+        return "anti_bot"
+    if getattr(fetched, "error", None):
+        return "playwright_error"
+    if getattr(fetched, "ok", False) and not markdown.strip():
+        return "empty_markdown"
+    return None
+
+
+def _call_fetch_html(
+    url: str, query: str, *, allow_browser: bool = True
+) -> tuple[object, extraction.ExtractedContent, str]:
+    """Call _fetch_html while tolerating older one-arg test doubles.
+
+    `_fetch_html` is private, but several unit tests monkeypatch it directly.
+    Supporting the legacy `(fetched, markdown, fetcher_name)` shape keeps those
+    tests focused on their branch behavior while production uses the richer
+    ExtractedContent payload.
+    """
+    try:
+        params = signature(_fetch_html).parameters.values()
+        accepts_query = any(p.kind == Parameter.VAR_KEYWORD or p.name == "query" for p in params)
+    except (TypeError, ValueError):
+        accepts_query = True
+
+    try:
+        params = signature(_fetch_html).parameters.values()
+        accepts_browser = any(
+            p.kind == Parameter.VAR_KEYWORD or p.name == "allow_browser" for p in params
+        )
+    except (TypeError, ValueError):
+        accepts_browser = True
+
+    if accepts_query and accepts_browser:
+        raw = _fetch_html(url, query=query, allow_browser=allow_browser)
+    elif accepts_query:
+        raw = _fetch_html(url, query=query)
+    else:
+        raw = _fetch_html(url)
+    fetched, extracted_or_markdown, fetcher_name = raw
+    if isinstance(extracted_or_markdown, extraction.ExtractedContent):
+        return fetched, extracted_or_markdown, fetcher_name
+    return (
+        fetched,
+        extraction.ExtractedContent(
+            markdown=str(extracted_or_markdown),
+            extractor=fetcher_name,
+        ),
+        fetcher_name,
+    )
 
 
 def _run_full_pipeline(
@@ -783,6 +1078,7 @@ def _run_full_pipeline(
     use_hyde: bool,
     use_rerank: bool,
     t_start: float,
+    allow_browser: bool = True,
 ) -> PipelineResult:
     """Non-profile pipeline: fetch → extract → chunk → (HyDE) → retrieve → rerank."""
     # 1. Fetch → markdown (or short-circuit for PDF / passthrough).
@@ -790,9 +1086,19 @@ def _run_full_pipeline(
     # markdown + page_title so Playwright/Trafilatura are skipped;
     # chunking / embedding / retrieval still run fresh because they're
     # query-dependent.
-    cached = fetch_cache.get(url)
-    cache_hit = cached is not None
-    fetch_elapsed_ms = 0
+    cached, cache_stale = fetch_cache.get_with_state(url)
+    revalidation_ms = 0
+    if cached is not None and cache_stale:
+        revalidated = fetch_cache.revalidate(cached)
+        revalidation_ms = revalidated.elapsed_ms
+        if revalidated.status == "not_modified":
+            cached, cache_stale = fetch_cache.get_with_state(url)
+        else:
+            fetch_cache.clear(url)
+            cached = None
+            cache_stale = False
+    cache_hit = cached is not None and not cache_stale
+    fetch_elapsed_ms = revalidation_ms if cache_hit else 0
     content_type: str | None = None
     fetched_html = ""
 
@@ -801,10 +1107,17 @@ def _run_full_pipeline(
         page_title = cached.page_title
         fetcher_name = cached.fetcher_used
         content_type = cached.content_type
+        extracted = extraction.ExtractedContent(
+            markdown=markdown,
+            extractor=cached.extractor or "",
+            source_selector=cached.source_selector,
+            source_xpath=cached.source_xpath,
+        )
     else:
         if _is_pdf_url(url):
             fetched = pdf.fetch(url)
             markdown = fetched.markdown
+            extracted = extraction.ExtractedContent(markdown=markdown, extractor="pdf")
             fetcher_name = "pdf"
         else:
             pt_result = _try_passthrough(url, query, t_start)
@@ -818,9 +1131,15 @@ def _run_full_pipeline(
             if pdf.probe(url):
                 fetched = pdf.fetch(url)
                 markdown = fetched.markdown
+                extracted = extraction.ExtractedContent(markdown=markdown, extractor="pdf")
                 fetcher_name = "pdf-probed"
             else:
-                fetched, markdown, fetcher_name = _fetch_html(url)
+                fetched, extracted, fetcher_name = _call_fetch_html(
+                    url,
+                    query,
+                    allow_browser=allow_browser,
+                )
+                markdown = extracted.markdown
 
         # 1b. Playwright-path post-detection passthrough. When a suffix-less
         # URL returns JSON/XML, Chromium wraps it in a viewer DOM — so we
@@ -877,12 +1196,23 @@ def _run_full_pipeline(
                 content_type=content_type,
                 cached_at=time.time(),
                 fetch_elapsed_ms=fetch_elapsed_ms,
+                extractor=extracted.extractor or None,
+                source_selector=extracted.source_selector,
+                source_xpath=extracted.source_xpath,
+                etag=getattr(fetched, "etag", None),
+                last_modified=getattr(fetched, "last_modified", None),
             )
         )
 
     # 2. Chunk
     t_chunk = time.monotonic()
-    chunks = chunking.chunk_markdown(markdown)
+    chunks = chunking.chunk_markdown(
+        markdown,
+        extractor=extracted.extractor or None,
+        source_url=url,
+        source_selector=extracted.source_selector,
+        source_xpath=extracted.source_xpath,
+    )
     chunk_ms = int((time.monotonic() - t_chunk) * 1000)
 
     # 3. Optional HyDE
@@ -896,8 +1226,9 @@ def _run_full_pipeline(
     # 4. Retrieve + rerank
     chosen_k = _adaptive_k(len(chunks), override=k)
     retrieve_k = min(chosen_k * 2, len(chunks)) if use_rerank else chosen_k
-    hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "0") == "1"
+    hybrid_flag = os.environ.get("TRAWL_HYBRID_RETRIEVAL", "1") != "0"
     chunk_budget = _read_chunk_budget()
+    context_batch = _contextual_batch(chunks, page_title, query)
     retrieved = retrieval.retrieve(
         query,
         chunks,
@@ -905,6 +1236,7 @@ def _run_full_pipeline(
         extra_query_texts=extras,
         hybrid=hybrid_flag,
         chunk_budget=chunk_budget,
+        context_texts=context_batch.texts if context_batch else None,
     )
     if retrieved.error:
         return _error_result(
@@ -921,6 +1253,12 @@ def _run_full_pipeline(
             hyde_used=use_hyde,
             hyde_text=hyde_text,
             n_chunks_embedded=retrieved.n_chunks_embedded,
+            embed_cache_hits=retrieved.embed_cache_hits,
+            embed_cache_misses=retrieved.embed_cache_misses,
+            contextual_retrieval_used=bool(context_batch),
+            context_prefix_chars_total=(context_batch.prefix_chars_total if context_batch else 0),
+            context_prefix_chars_avg=(context_batch.prefix_chars_avg if context_batch else 0.0),
+            retrieval_diagnostics=_retrieval_diagnostics(retrieved),
         )
 
     rerank_ms = 0
@@ -935,6 +1273,12 @@ def _run_full_pipeline(
         final_scored = retrieved.scored
 
     emitted_chunks = [s.chunk for s in final_scored]
+    chunk_dicts = [
+        _chunk_to_dict(c, score=s.score, title=page_title)
+        for c, s in zip(emitted_chunks, final_scored, strict=True)
+    ]
+    warnings = [retrieved.warning] if retrieved.warning else []
+    warnings += _scan_injection(chunk_dicts, html=fetched_html)
     return PipelineResult(
         url=url,
         query=query,
@@ -948,10 +1292,8 @@ def _run_full_pipeline(
         structured_path=False,
         hyde_used=use_hyde,
         hyde_text=hyde_text,
-        chunks=[
-            _chunk_to_dict(c, score=s.score)
-            for c, s in zip(emitted_chunks, final_scored, strict=True)
-        ],
+        chunks=chunk_dicts,
+        warnings=warnings,
         excerpts=enrichment.extract_excerpts(emitted_chunks),
         outbound_links=enrichment.extract_outbound_links(emitted_chunks),
         page_entities=enrichment.extract_page_entities(
@@ -966,6 +1308,12 @@ def _run_full_pipeline(
         content_type=content_type,
         cache_hit=cache_hit,
         n_chunks_embedded=retrieved.n_chunks_embedded,
+        embed_cache_hits=retrieved.embed_cache_hits,
+        embed_cache_misses=retrieved.embed_cache_misses,
+        contextual_retrieval_used=bool(context_batch),
+        context_prefix_chars_total=(context_batch.prefix_chars_total if context_batch else 0),
+        context_prefix_chars_avg=(context_batch.prefix_chars_avg if context_batch else 0.0),
+        retrieval_diagnostics=_retrieval_diagnostics(retrieved),
     )
 
 

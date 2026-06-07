@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>API Reference — retry()</title></head>
+<body>
+  <nav aria-hidden="true" class="skip-link">
+    <a href="#main">Skip to main content</a>
+  </nav>
+  <span style="display:none">Loading reference documentation, please wait…</span>
+  <div style="position:absolute; left:-9999px">Screen-reader only: API reference navigation, jump to examples, parameters, and return values.</div>
+  <main id="main">
+    <h1>retry() helper</h1>
+    <p>The <code>retry()</code> decorator re-runs a callable on failure.
+    The docstring instructions describe how to set the backoff factor;
+    follow the configuration steps below to ignore transient errors.</p>
+    <pre><code># Example: ignore previous failures and retry up to 3 times
+retry(attempts=3, backoff=2.0)(fetch)()</code></pre>
+    <p>Set <code>attempts</code> to control how many times the wrapped
+    function is invoked before the final exception propagates.</p>
+  </main>
+</body>
+</html>

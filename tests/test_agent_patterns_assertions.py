@@ -16,6 +16,7 @@ No network, no pipeline imports — these are pure-function checks.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -309,3 +310,157 @@ def test_cache_hit_defaults_to_false_when_field_missing():
     assert fails == []
     fails = _evaluate_assertions({"cache_hit": True}, {})
     assert len(fails) == 1
+
+
+# ---------- live: optional SKIP semantics (PatternOutcome.status)
+
+
+def _outcome(live: str, *, failing: bool):
+    from test_agent_patterns import PatternOutcome, StepOutcome
+
+    step = StepOutcome(
+        op="fetch_page",
+        url="https://example.com",
+        query="q",
+        elapsed_ms=1,
+        measurements={},
+        assertion_failures=["boom"] if failing else [],
+    )
+    return PatternOutcome(
+        id="t",
+        shard="s",
+        category="single_fetch",
+        repeats=1,
+        total_ms_p95=1,
+        live=live,
+        steps=[step],
+    )
+
+
+def test_status_pass_regardless_of_live_mode():
+    assert _outcome("required", failing=False).status == "PASS"
+    assert _outcome("optional", failing=False).status == "PASS"
+
+
+def test_status_fail_when_required_pattern_fails():
+    assert _outcome("required", failing=True).status == "FAIL"
+
+
+def test_status_skip_when_optional_pattern_fails():
+    assert _outcome("optional", failing=True).status == "SKIP"
+
+
+# ---------- state isolation
+
+
+def test_setup_isolation_points_all_state_env_at_temp_dir(monkeypatch):
+    from test_agent_patterns import _ISOLATION_ENV, _setup_isolation
+
+    for var in _ISOLATION_ENV:
+        monkeypatch.delenv(var, raising=False)
+    root = _setup_isolation()
+    try:
+        for var, rel in _ISOLATION_ENV.items():
+            assert os.environ[var] == str(root / rel)
+    finally:
+        for var in _ISOLATION_ENV:
+            os.environ.pop(var, None)
+
+
+# ---------- profile_page implicit success check
+
+
+def test_profile_step_ok_true_passes():
+    from test_agent_patterns import _check_profile_step
+
+    assert _check_profile_step({}, {"ok": True, "main_selector": "div.x"}) == []
+
+
+def test_profile_step_ok_false_fails_with_stage_and_error():
+    from test_agent_patterns import _check_profile_step
+
+    fails = _check_profile_step({}, {"ok": False, "stage": "vlm", "error": "VLM down"})
+    assert len(fails) == 1
+    assert "stage=vlm" in fails[0]
+    assert "VLM down" in fails[0]
+
+
+def test_profile_step_error_contains_opts_out_of_implicit_check():
+    """A pattern asserting an intentional failure handles ok=False itself."""
+    from test_agent_patterns import _check_profile_step
+
+    fails = _check_profile_step(
+        {"error_contains": "VLM"}, {"ok": False, "stage": "vlm", "error": "VLM down"}
+    )
+    assert fails == []
+
+
+def test_profile_step_missing_ok_key_passes():
+    """Defensive: dicts without ok (e.g. mocked) are not implicit failures."""
+    from test_agent_patterns import _check_profile_step
+
+    assert _check_profile_step({}, {}) == []
+
+
+# ---------- multi-op repeats clamp + budget diff
+
+
+def _mk(raw_extra: dict):
+    raw = {
+        "id": "t2",
+        "primary_agent": ["hermes"],
+        "category": "single_fetch",
+        "description": "x",
+    }
+    raw.update(raw_extra)
+    return parse_pattern(raw, shard="s")
+
+
+def test_effective_repeats_clamps_multi_op_to_one():
+    from test_agent_patterns import _effective_repeats
+
+    multi = _mk(
+        {
+            "category": "repeat_visits",
+            "steps": [
+                {"op": "fetch_page", "url": "https://example.com", "query": "q"},
+                {"op": "fetch_page", "ref": 0},
+            ],
+        }
+    )
+    single = _mk({"url": "https://example.com", "query": "q"})
+    assert _effective_repeats(multi, 3) == 1
+    assert _effective_repeats(single, 3) == 3
+    assert _effective_repeats(single, 1) == 1
+
+
+def test_render_budget_diff_orders_worst_first(monkeypatch, tmp_path):
+    import test_agent_patterns as harness
+
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        '{"a": {"total_ms_p95": 1000}, "b": {"total_ms_p95": 1000}}', encoding="utf-8"
+    )
+    monkeypatch.setattr(harness, "BASELINE_PATH", baseline)
+
+    def _o(pid, ms):
+        return harness.PatternOutcome(
+            id=pid, shard="s", category="single_fetch", repeats=1, total_ms_p95=ms
+        )
+
+    diff = harness._render_budget_diff([_o("a", 1500), _o("b", 800), _o("c", 999)])
+    assert diff is not None
+    lines = [ln for ln in diff.splitlines() if ln.startswith("| `")]
+    assert lines[0].startswith("| `a` | 1000ms | 1500ms | +50.0%")
+    assert lines[1].startswith("| `b` | 1000ms | 800ms | -20.0%")
+    assert all("`c`" not in ln for ln in lines)
+
+
+def test_render_budget_diff_none_without_baseline(monkeypatch, tmp_path):
+    import test_agent_patterns as harness
+
+    monkeypatch.setattr(harness, "BASELINE_PATH", tmp_path / "missing.json")
+    o = harness.PatternOutcome(
+        id="a", shard="s", category="single_fetch", repeats=1, total_ms_p95=5
+    )
+    assert harness._render_budget_diff([o]) is None

@@ -27,7 +27,13 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _fake_fetch_relevant(url: str, query: str, k=None, use_hyde: bool = False):
+def _fake_fetch_relevant(
+    url: str,
+    query: str,
+    k=None,
+    use_hyde: bool = False,
+    use_rerank: bool = True,
+):
     return SimpleNamespace(
         url=url,
         query=query,
@@ -159,6 +165,8 @@ async def _run() -> int:
         content = call_result["result"]["content"]
         payload = json.loads(content[0]["text"])
         assert payload["ok"] is True, f"call failed: {payload}"
+        assert payload["content_boundary"]["type"] == "untrusted_webpage_text"
+        assert payload["content_boundary"]["applies_to"] == ["chunks", "excerpts"]
         assert payload["n_chunks_returned"] == 1
         assert "fake chunk for what is this" in payload["chunks"][0]["text"]
 

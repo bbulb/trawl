@@ -17,6 +17,7 @@ import time
 from urllib.parse import unquote, urlsplit
 
 import httpx
+from bs4 import BeautifulSoup
 
 from trawl import extraction
 
@@ -26,6 +27,7 @@ from .playwright import FetchResult, make_error_result
 logger = logging.getLogger(__name__)
 
 _WIKI_HOST_RE = re.compile(r"^([a-z]{2,3})(?:\.m)?\.wikipedia\.org$")
+_BROWSER_FALLBACK_REQUIRED = "browser fallback required"
 _SPECIAL_PREFIXES = (
     "Special:",
     "Wikipedia:",
@@ -68,7 +70,45 @@ def _parse_wikipedia_url(url: str) -> tuple[str, str] | None:
     return (lang, title)
 
 
-def fetch(url: str) -> FetchResult:
+def _browser_fallback_result(url: str, t0: float, reason: str) -> FetchResult:
+    return make_error_result(url, "wikipedia", t0, f"{_BROWSER_FALLBACK_REQUIRED}: {reason}")
+
+
+def _preserve_headings(html: str) -> str:
+    """Promote MediaWiki H1-H6 to markdown-prefixed paragraphs.
+
+    Wikipedia's 2024+ HTML wraps headings in ``<div class="mw-heading">``
+    with a ``[edit]`` sibling span. Trafilatura's article-content
+    detector treats that whole block as boilerplate and drops the
+    heading, leaving downstream chunks with empty ``heading=''`` —
+    which strips topical signal from dense embedding and degrades
+    retrieval on biographical wiki pages (e.g. asking for "주요 업적"
+    on `이순신` then surfaces biographical chunks instead of battle
+    sections).
+
+    This preprocessor strips the edit-section spans and replaces each
+    ``<hN>X</hN>`` with ``<p>#N X</p>`` so Trafilatura keeps the text
+    as content and ``chunk_markdown`` recognises the markdown prefix
+    as a heading line. Returns the modified HTML.
+    """
+    try:
+        soup = BeautifulSoup(html, "lxml")
+    except Exception:
+        return html
+    for span in soup.find_all("span", class_="mw-editsection"):
+        span.decompose()
+    for level in range(1, 7):
+        for h in soup.find_all(f"h{level}"):
+            text = h.get_text(strip=True)
+            if not text:
+                continue
+            new = soup.new_tag("p")
+            new.string = ("#" * level) + " " + text
+            h.replace_with(new)
+    return str(soup)
+
+
+def fetch(url: str, *, allow_browser_fallback: bool = True) -> FetchResult:
     """Fetch a Wikipedia article via the MediaWiki parse API.
 
     Returns the article HTML converted to markdown using the existing
@@ -109,16 +149,22 @@ def fetch(url: str) -> FetchResult:
                 title,
                 data["error"].get("info", ""),
             )
-            return pw.fetch(url)
+            if allow_browser_fallback:
+                return pw.fetch(url)
+            return _browser_fallback_result(url, t0, "MediaWiki API returned an error")
 
         html = data.get("parse", {}).get("text", {}).get("*", "")
         if not html:
             logger.info("empty HTML from MediaWiki API for %s/%s", lang, title)
-            return pw.fetch(url)
+            if allow_browser_fallback:
+                return pw.fetch(url)
+            return _browser_fallback_result(url, t0, "empty HTML from MediaWiki API")
 
-        markdown = extraction.html_to_markdown(html)
+        markdown = extraction.html_to_markdown(_preserve_headings(html))
         if not markdown:
-            return pw.fetch(url)
+            if allow_browser_fallback:
+                return pw.fetch(url)
+            return _browser_fallback_result(url, t0, "empty markdown after MediaWiki extraction")
 
         return FetchResult(
             url=url,
@@ -137,4 +183,6 @@ def fetch(url: str) -> FetchResult:
             e,
         )
 
-    return pw.fetch(url)
+    if allow_browser_fallback:
+        return pw.fetch(url)
+    return _browser_fallback_result(url, t0, "MediaWiki API failed")

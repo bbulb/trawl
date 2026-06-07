@@ -20,8 +20,40 @@ from .playwright import FetchResult, make_error_result
 logger = logging.getLogger(__name__)
 
 _YT_HOSTS = {"www.youtube.com", "youtube.com", "m.youtube.com", "youtu.be"}
+_BROWSER_FALLBACK_REQUIRED = "browser fallback required"
 
 _PATH_ID_RE = re.compile(r"^/(?:shorts|live)/([A-Za-z0-9_-]{11})(?:[/?#]|$)")
+
+# English variants tried first when choosing a transcript. Many videos
+# carry community-contributed manual subtitles in dozens of languages
+# whose order is arbitrary, so "first manual" can return e.g. Arabic for
+# an English video. English is the common lingua franca and the language
+# most queries/assertions expect; when absent we fall back to the
+# original-audio-language transcript (see _choose_transcript).
+_PREFERRED_LANGS = ("en", "en-US", "en-GB", "en-CA", "en-AU")
+
+
+def _choose_transcript(transcript_list):
+    """Pick the most useful transcript from a TranscriptList.
+
+    Order: (1) English (find_transcript prefers manual over generated
+    within the language), (2) the auto-generated transcript — reliably
+    in the original audio language, avoiding arbitrary manual
+    translations, (3) the first manual, (4) the first available.
+    """
+    from youtube_transcript_api._errors import NoTranscriptFound
+
+    try:
+        return transcript_list.find_transcript(_PREFERRED_LANGS)
+    except NoTranscriptFound:
+        pass
+    generated = [t for t in transcript_list if t.is_generated]
+    if generated:
+        return generated[0]
+    manual = [t for t in transcript_list if not t.is_generated]
+    if manual:
+        return manual[0]
+    return list(transcript_list)[0]
 
 
 def matches(url: str) -> bool:
@@ -59,7 +91,11 @@ def _extract_video_id(url: str) -> str | None:
     return None
 
 
-def fetch(url: str) -> FetchResult:
+def _browser_fallback_result(url: str, t0: float, reason: str) -> FetchResult:
+    return make_error_result(url, "youtube", t0, f"{_BROWSER_FALLBACK_REQUIRED}: {reason}")
+
+
+def fetch(url: str, *, allow_browser_fallback: bool = True) -> FetchResult:
     """Fetch a YouTube video's transcript text.
 
     On the happy path (transcript available), returns the transcript as
@@ -97,9 +133,7 @@ def fetch(url: str) -> FetchResult:
     try:
         ytt = YouTubeTranscriptApi()
         transcript_list = ytt.list(video_id)
-        # Prefer manual subtitles over auto-generated; accept any language.
-        manual = [t for t in transcript_list if not t.is_generated]
-        chosen = manual[0] if manual else list(transcript_list)[0]
+        chosen = _choose_transcript(transcript_list)
         transcript = chosen.fetch()
         text = " ".join(snippet.text for snippet in transcript)
         if not text.strip():
@@ -128,4 +162,6 @@ def fetch(url: str) -> FetchResult:
         )
 
     # Fallback: render the page with Playwright to get title/description.
-    return pw.fetch(url)
+    if allow_browser_fallback:
+        return pw.fetch(url)
+    return _browser_fallback_result(url, t0, "YouTube transcript unavailable")

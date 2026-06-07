@@ -160,12 +160,38 @@ def test_probe_head_ok_json(http_server):
     assert ct.startswith("application/json")
 
 
-def test_probe_head_405_returns_none(http_server):
+def test_probe_head_405_falls_back_to_get(http_server):
+    # HEAD rejected (405) but GET serves passthrough data — the Hacker
+    # News /rss shape. probe() should recover the Content-Type via a
+    # header-only GET instead of giving up.
     base, handler = http_server
     handler.response_body = b'{"a": 1}'
     handler.response_ct = "application/json"
+    handler.response_status = 200
     handler.head_status = 405
-    assert passthrough.probe(f"{base}/v1/forecast") is None
+    ct = passthrough.probe(f"{base}/v1/forecast")
+    assert ct is not None
+    assert ct.startswith("application/json")
+
+
+def test_probe_head_405_get_non_passthrough_returns_none(http_server):
+    # HEAD rejected, GET reveals HTML — not passthrough, fall through.
+    base, handler = http_server
+    handler.response_body = b"<html></html>"
+    handler.response_ct = "text/html"
+    handler.response_status = 200
+    handler.head_status = 405
+    assert passthrough.probe(f"{base}/page") is None
+
+
+def test_probe_head_405_get_error_returns_none(http_server):
+    # HEAD rejected and GET also errors (404) — fall through, no crash.
+    base, handler = http_server
+    handler.response_body = b""
+    handler.response_ct = "application/json"
+    handler.response_status = 404
+    handler.head_status = 405
+    assert passthrough.probe(f"{base}/missing") is None
 
 
 def test_probe_head_non_passthrough_ct(http_server):
@@ -220,6 +246,9 @@ def test_fetch_relevant_passthrough_json(http_server):
     assert len(r.chunks) == 1
     assert r.chunks[0]["text"] == body.decode("utf-8")
     assert r.chunks[0]["chunk_index"] == 0
+    assert r.chunks[0]["source_url"] == f"{base}/data.json"
+    assert r.chunks[0]["heading_path"] == []
+    assert r.chunks[0]["title"] == ""
     assert r.n_chunks_total == 1
 
 
@@ -259,11 +288,13 @@ def test_pipeline_post_detection_passthrough(http_server, monkeypatch):
     base, handler = http_server
     body = b'{"post": "detect"}'
     handler.response_body = body
-    handler.response_ct = "application/json"
+    # The probe (HEAD 405 -> header-only GET) sees a non-passthrough
+    # Content-Type here, so it defers to Playwright. The mocked Playwright
+    # FetchResult below carries application/json, which the Content-Type
+    # post-check then salvages — exercising the post-detection path now
+    # that a plain 405 is handled by the probe's GET fallback.
+    handler.response_ct = "text/html"
     handler.response_status = 200
-    # This test covers the case where HEAD isn't supported, so the pre-probe
-    # must fail and the pipeline must fall through to the Playwright render
-    # before the Content-Type post-check salvages the body.
     handler.head_status = 405
 
     # Simulate Playwright: return a FetchResult with content_type set but
@@ -271,7 +302,7 @@ def test_pipeline_post_detection_passthrough(http_server, monkeypatch):
     from trawl import pipeline as pipeline_mod
     from trawl.fetchers.playwright import FetchResult as PwFetchResult
 
-    def fake_fetch_html(url: str):
+    def fake_fetch_html(url: str, query: str | None = None):
         fr = PwFetchResult(
             url=url,
             html="<html><pre>{&quot;post&quot;: &quot;detect&quot;}</pre></html>",
@@ -281,7 +312,11 @@ def test_pipeline_post_detection_passthrough(http_server, monkeypatch):
             elapsed_ms=5,
             content_type="application/json; charset=utf-8",
         )
-        return fr, "garbage-markdown", "playwright+trafilatura"
+        extracted = pipeline_mod.extraction.ExtractedContent(
+            markdown="garbage-markdown",
+            extractor="trafilatura-recall",
+        )
+        return fr, extracted, "playwright+trafilatura"
 
     monkeypatch.setattr(pipeline_mod, "_fetch_html", fake_fetch_html)
 
@@ -302,7 +337,7 @@ def test_pipeline_post_detection_passthrough_fetch_fails(monkeypatch):
     from trawl.fetchers import passthrough as pt_mod
     from trawl.fetchers.playwright import FetchResult as PwFetchResult
 
-    def fake_fetch_html(url: str):
+    def fake_fetch_html(url: str, query: str | None = None):
         return (
             PwFetchResult(
                 url=url,
@@ -313,7 +348,7 @@ def test_pipeline_post_detection_passthrough_fetch_fails(monkeypatch):
                 elapsed_ms=5,
                 content_type="application/json",
             ),
-            "",
+            pipeline_mod.extraction.ExtractedContent(markdown="", extractor=""),
             "playwright+trafilatura",
         )
 

@@ -9,6 +9,167 @@ not yet follow semver strictly — expect breaking changes before
 
 _No changes yet._
 
+## [0.4.5] — 2026-06-07
+
+### Added
+
+- **Indirect prompt-injection defense** (default on, opt out via
+  `TRAWL_INJECTION_SCAN=0`) — each fetch is scanned (model-free,
+  `src/trawl/sanitize.py`): Unicode tag characters (U+E0000–E007F) are
+  stripped, instruction-like chunks gain `suspicious_injection`, and
+  instruction-like CSS-hidden / off-screen / aria-hidden segments gain
+  `suspicious_hidden` (annotate, never delete). Signals surface in
+  `PipelineResult.warnings`; flag keys appear on a chunk only when
+  true. MCP `fetch_page` / `profile_page` carry `openWorldHint` +
+  `readOnlyHint` annotations alongside the existing untrusted-content
+  `content_boundary` response field. Cost is <1% on a 198 KB /
+  600-chunk worst case. Gates: fixtures 3/3 + benign 0-flag, parity
+  15/15, coding 24/24, latency +5%. See
+  `docs/superpowers/specs/2026-06-05-injection-defense-design.md`.
+
+- **Document embedding cache** (`src/trawl/embedding_cache.py`) —
+  successful chunk embeddings are cached on disk keyed by model,
+  endpoint, contextual mode/version, and text hash, so a re-fetch
+  within TTL skips the bge-m3 round trip. Controlled by
+  `TRAWL_EMBED_CACHE_TTL` / `TRAWL_EMBED_CACHE_MAX_MB` /
+  `TRAWL_EMBED_CACHE_PATH`; per-call counters surface as
+  `PipelineResult.embed_cache_hits` / `embed_cache_misses`. Shipped
+  disabled, then flipped default-on — see the Changed entry below.
+
+- **Contextual retrieval** (opt-in, default off) —
+  `TRAWL_CONTEXTUAL_RETRIEVAL=1` prepends deterministic page/section
+  context to dense and BM25 retrieval inputs; `auto` enables it only
+  for identifier/code-heavy queries, large pages, and repeated-record
+  pages. Output chunks are unchanged — only the ranking inputs gain
+  context. See `docs/superpowers/specs/2026-05-02-contextual-retrieval-design.md`.
+
+- **Extractor candidate scoring** — `extraction.py` now picks among
+  Trafilatura precise / recall / BeautifulSoup (and optional
+  readability-lxml when installed) by a score that combines query
+  coverage with length/heading/code/table signals, replacing the
+  fixed three-way preference order.
+
+- **Query-aware fusion weighting** (default on) — rule-based query
+  classification (identifier/code vs concept) adjusts the BM25 weight
+  inside hybrid RRF. A 2026-06-06 A/B validated the feature as
+  end-to-end neutral on reader-comparison (rankers concur upstream of
+  the reranker); kept as a tested guardrail. See
+  `docs/superpowers/specs/2026-06-06-query-aware-fusion-validation.md`.
+
+- **Chunk provenance** — each chunk payload now carries `extractor`,
+  `source_url`, and `char_span` so downstream agents can cite where a
+  chunk came from inside the fetched document.
+
+- **`trawl-doctor` runtime health check** (also
+  `python -m trawl.diagnostics --json`) — verifies Python, Playwright
+  Chromium, cache-path writability, the embedding endpoint, and the
+  optional reranker/VLM endpoints before wiring trawl into an MCP
+  client.
+
+- **BM25-only degraded retrieval** — if the embedding endpoint is
+  unreachable, retrieval falls back to BM25 lexical ranking and
+  returns a warning in the result payload instead of failing the
+  fetch.
+
+- **MCP worker separation** — the MCP server now runs Playwright
+  fetches on a dedicated single worker and raw/API/PDF routes on a
+  general pool (`TRAWL_MCP_GENERAL_WORKERS`, default 4), so fast
+  paths are not queued behind slow browser fetches.
+
+- **Fetch-cache conditional revalidation** — cached fetches store
+  `ETag` / `Last-Modified` validators; a stale record triggers a
+  conditional request where `304` refreshes the cache entry without
+  re-rendering (`TRAWL_FETCH_CACHE_REVALIDATE_TIMEOUT`, default 10 s).
+
+- **Optional Scrapling fallback fetcher** (opt-in, off by default) —
+  `pip install -e '.[scrapling]'` + `TRAWL_SCRAPLING_FALLBACK=1`
+  enables a recovery-only HTML supplier after Playwright fails or
+  returns anti-bot content; extraction/chunking/retrieval still run
+  in trawl. `TRAWL_SCRAPLING_MODE` (`auto`/`dynamic`/`stealthy`) and
+  `TRAWL_SCRAPLING_TIMEOUT_MS` tune it.
+
+- **Passthrough header-only GET fallback** — endpoints that reject
+  `HEAD` (405/403/501) are re-probed with a header-only GET, so
+  suffix-less API/RSS paths like `news.ycombinator.com/rss` still
+  route through raw passthrough (`fetcher_used: passthrough-probed`).
+
+### Fixed
+
+- **Wikipedia fetcher heading preservation** — modern MediaWiki HTML
+  (2024+) wraps each `<hN>` inside `<div class="mw-heading">` next to
+  a `<span class="mw-editsection">` (the `[edit]` link). Trafilatura's
+  article-content detector treated the whole div as boilerplate and
+  dropped the heading text, leaving every chunk with empty
+  `heading=''`. On `이순신` (116 chunks, 47 H1-H6 in the source HTML)
+  this stripped all topical signal and made dense embedding rank
+  biographical chunks ahead of achievement chunks for a biographical
+  query, breaking `korean_wiki_person` parity assertion
+  `must_contain_any_2: [한산도, 노량, 명량, 임진왜란, 옥포]`. Fix:
+  `src/trawl/fetchers/wikipedia.py` now decomposes
+  `<span class="mw-editsection">` and replaces each `<hN>X</hN>`
+  with `<p>#N X</p>` before calling `extraction.html_to_markdown`,
+  so Trafilatura keeps the heading text as content and
+  `chunk_markdown` recognises the markdown prefix. Parity 15/15
+  recovered with reranker on; coding shard 24/24 preserved.
+
+- **YouTube transcript language selection** — `_choose_transcript`
+  previously took the first manually-created transcript regardless of
+  language (a 3Blue1Brown video returned the Arabic track). Order is
+  now: English → auto-generated original language → manual → first
+  available. The fetcher does not receive the query, so
+  English-preference is the best static policy.
+
+### Changed
+
+- **`TRAWL_HYBRID_RETRIEVAL` default flipped from `0` (opt-in) to
+  `1` (default on)** — BM25 lexical ranking now runs alongside dense
+  cosine by default, fused via RRF (`k=60`, unchanged). Driven by a
+  pre-registered 6-gate spike on 2026-05-19
+  (`benchmarks/hybrid_default_on_spike.py`, summary in
+  `benchmarks/results/hybrid-default-on-spike/20260519T054739Z-post-wiki-fix/`).
+  Gates: reader-comparison 6/6 hybrid + `flipped_to_fail=0` (dense
+  alone is 5/6 — `wiki_large_language_model` is saved by BM25
+  fusion); parity 15/15 in both modes; coding shard 24/24 in both
+  modes; `code_heavy_query` category regression 0 (preserves C6's
+  original surface); Korean 3/3 in both modes; retrieval p95 +1.3%
+  (well under the +20% gate). The flip lands together with the
+  wiki-fetcher heading-preservation fix above — the wiki fix
+  established the clean 15/15 baseline that made the spike
+  decidable. Opt out via `TRAWL_HYBRID_RETRIEVAL=0`. CLAUDE.md
+  "Hybrid dense + BM25 retrieval" section updated.
+
+- **`TRAWL_EMBED_CACHE_TTL` default flipped from `0` (disabled) to
+  `3600` (1 hour, enabled)** — roadmap Spike B
+  (`docs/superpowers/plans/2026-05-18-trawl-improvement-roadmap.md`
+  step #3). Single-line change in `src/trawl/embedding_cache.py`
+  (`DEFAULT_TTL_SECONDS`). Pre-registered gate: cold retrieval p95
+  within +10% of prior TTL=0 baseline; warm retrieval p95 reduction
+  ≥ 80%; disk usage ≤ `TRAWL_EMBED_CACHE_MAX_MB=512` cap; cache key
+  fields unchanged so existing on-disk caches keep hitting. Measured
+  on 6 reader-comparison URLs (`benchmarks/results/embed-cache-default-on/20260519-014510Z/`):
+  cold avg retrieval **1503 ms** (vs prior 2026-05-04 dense baseline
+  1445 ms, +4%) → warm avg **57 ms** (**−96.2%**), disk 9.4 MB / 401
+  files (1.8% of cap), 100 % embed-cache hit rate on warm phase.
+  Full pytest 414/414. Parity unchanged at 13/15 (`korean_wiki_person`
+  + `hada_news` are pre-existing content-drift flakes since 2026-04-22,
+  identical fail under TTL=0 and TTL=3600). Opt out via
+  `TRAWL_EMBED_CACHE_TTL=0`. Design doc:
+  `docs/superpowers/specs/2026-05-18-embed-cache-default-on-design.md`.
+
+### Tests / research (no library behavior change)
+
+- **agent_patterns hardened and grown 104 → 110 patterns** — full-run
+  required-FAIL count driven to 0 (101 PASS + 9 `live: optional`
+  SKIPs): stale assertions refreshed, per-run state isolation,
+  `live: optional` SKIP reporting, `profile_page` implicit success
+  checks, catalog-unique URLs for stateful patterns, and S5 scenario
+  diversification (repeat_visits / error_handling / large_page beyond
+  the coding shard, C16 enrichment assertions spread).
+- **Research outcomes recorded as keep-current**: Qwen3-Embedding swap
+  REJECTed (4/5 gates fail), PDF backend comparison staged — PyMuPDF
+  kept (structured-backend trigger not met), query-aware fusion
+  validated neutral. See `docs/superpowers/specs/` outcome docs.
+
 ## [0.4.4] — 2026-04-22
 
 Patch release. Flips the `TRAWL_CHUNK_BUDGET` default from `0`

@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
-from .bm25 import bm25_rank, rrf_fuse
+from . import contextual, embedding_cache
+from .bm25 import bm25_rank
 from .chunking import Chunk
 
 DEFAULT_EMBEDDING_URL = os.environ.get("TRAWL_EMBED_URL", "http://localhost:8081/v1")
@@ -26,6 +29,7 @@ EMBEDDING_BATCH = 64
 # drop this to 450 (and lower chunking.max_chars to match).
 MAX_EMBED_INPUT_CHARS = 1800
 HTTP_TIMEOUT_S = 60.0
+DEFAULT_FALLBACK_RRF_K = int(os.environ.get("TRAWL_BM25_FALLBACK_RRF_K", "60"))
 
 
 @dataclass
@@ -40,7 +44,21 @@ class RetrievalResult:
     elapsed_ms: int
     embed_calls: int
     error: str | None = None
+    warning: str | None = None
     n_chunks_embedded: int = 0
+    retrieval_mode: str = "dense"
+    query_type: str = "concept"
+    fusion_weights: dict[str, float] | None = None
+    rank_diagnostics: list[dict] | None = None
+    sparse_rank_error: str | None = None
+    embed_cache_hits: int = 0
+    embed_cache_misses: int = 0
+
+
+@dataclass
+class SparseRankResult:
+    ranking: list[int]
+    error: str | None = None
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -72,6 +90,213 @@ def _embed_batch(
     return [item["embedding"] for item in data["data"]]
 
 
+def _embed_documents_with_cache(
+    client: httpx.Client,
+    base_url: str,
+    model: str,
+    texts: list[str],
+    *,
+    contextual_mode: str,
+) -> tuple[list[list[float]], int, int, int]:
+    embeddings: list[list[float] | None] = []
+    misses: list[tuple[int, str, embedding_cache.CacheKey]] = []
+    prefix_max = contextual.max_prefix_chars()
+    prefix_ver = contextual.prefix_version()
+    cache_enabled = embedding_cache.is_enabled()
+    cache_hits = 0
+
+    for index, text in enumerate(texts):
+        key = embedding_cache.CacheKey(
+            model=model,
+            base_url=base_url,
+            text=text,
+            contextual_mode=contextual_mode,
+            prefix_max_chars=prefix_max,
+            prefix_version=prefix_ver,
+        )
+        cached = embedding_cache.get(key)
+        if cached is None:
+            embeddings.append(None)
+            misses.append((index, text, key))
+        else:
+            cache_hits += 1
+            embeddings.append(cached)
+
+    embed_calls = 0
+    cache_misses = len(misses) if cache_enabled else 0
+    for start in range(0, len(misses), EMBEDDING_BATCH):
+        batch = misses[start : start + EMBEDDING_BATCH]
+        if not batch:
+            continue
+        try:
+            batch_embeddings = _embed_batch(
+                client,
+                base_url,
+                model,
+                [text for _index, text, _key in batch],
+            )
+        except httpx.HTTPError as e:
+            e._trawl_doc_embed_calls = embed_calls
+            e._trawl_embed_cache_hits = cache_hits
+            e._trawl_embed_cache_misses = cache_misses
+            raise
+        embed_calls += 1
+        for (index, _text, key), embedding in zip(batch, batch_embeddings, strict=True):
+            embeddings[index] = embedding
+            embedding_cache.put(key, embedding)
+
+    return (
+        [embedding for embedding in embeddings if embedding is not None],
+        embed_calls,
+        cache_hits,
+        cache_misses,
+    )
+
+
+_IDENTIFIER_RE = re.compile(
+    r"([A-Za-z_][A-Za-z0-9_]*[.:/][A-Za-z0-9_./:-]+|[A-Za-z_][A-Za-z0-9_]*\(\))"
+)
+_CODE_HINT_RE = re.compile(
+    r"\b(api|class|cli|def|function|handler|method|module|parameter|signature|"
+    r"traceback|import|async|await|exception|error|config|endpoint|sdk)\b",
+    re.IGNORECASE,
+)
+
+
+def _classify_query(query: str) -> str:
+    if _IDENTIFIER_RE.search(query):
+        return "identifier"
+    if "`" in query:
+        return "identifier"
+    if _CODE_HINT_RE.search(query) and re.search(r"[A-Za-z_][A-Za-z0-9_]*", query):
+        return "identifier"
+    return "concept"
+
+
+def _fusion_weights(query_type: str, ranker_names: list[str]) -> dict[str, float]:
+    if query_type == "identifier":
+        base = {"dense": 0.6, "bm25": 3.0, "bge_m3_sparse": 3.0}
+    else:
+        base = {"dense": 1.2, "bm25": 0.8, "bge_m3_sparse": 0.8}
+    return {name: base.get(name, 1.0) for name in ranker_names}
+
+
+def _weighted_rrf_fuse(
+    rankings: dict[str, list[int]],
+    *,
+    weights: dict[str, float],
+    k: int,
+) -> tuple[list[int], dict[int, dict]]:
+    scores: dict[int, float] = {}
+    diagnostics: dict[int, dict] = {}
+    for name, ranking in rankings.items():
+        weight = weights.get(name, 1.0)
+        for rank, idx in enumerate(ranking):
+            contribution = weight * (1.0 / (k + rank))
+            scores[idx] = scores.get(idx, 0.0) + contribution
+            diag = diagnostics.setdefault(
+                idx,
+                {"chunk_index": idx, "ranks": {}, "contributions": {}, "fusion_score": 0.0},
+            )
+            diag["ranks"][name] = rank
+            diag["contributions"][name] = round(contribution, 6)
+            diag["fusion_score"] = round(scores[idx], 6)
+    ordered = sorted(scores, key=lambda i: -scores[i])
+    return ordered, diagnostics
+
+
+def _ranking_from_scores(scores: list[float]) -> list[int]:
+    return sorted(range(len(scores)), key=lambda i: -scores[i])
+
+
+def _bm25_fallback_result(
+    query: str,
+    chunks: list[Chunk],
+    chunk_texts: list[str],
+    *,
+    k: int,
+    t0: float,
+    embed_calls: int,
+    embed_cache_hits: int,
+    embed_cache_misses: int,
+    error: str,
+) -> RetrievalResult:
+    ranked = bm25_rank(query, chunk_texts)
+    scored = [ScoredChunk(chunk=chunks[i], score=0.0) for i in ranked[:k]]
+    query_type = _classify_query(query)
+    diagnostics = [
+        {
+            "pool_index": i,
+            "chunk_index": chunks[i].chunk_index,
+            "ranks": {"bm25": rank},
+            "contributions": {"bm25": round(1.0 / (DEFAULT_FALLBACK_RRF_K + rank), 6)},
+            "fusion_score": round(1.0 / (DEFAULT_FALLBACK_RRF_K + rank), 6),
+        }
+        for rank, i in enumerate(ranked[:k])
+    ]
+    return RetrievalResult(
+        scored=scored,
+        elapsed_ms=int((time.monotonic() - t0) * 1000),
+        embed_calls=embed_calls,
+        error=None,
+        warning=f"embedding unavailable; using BM25 fallback: {error}",
+        n_chunks_embedded=0,
+        retrieval_mode="bm25_fallback",
+        query_type=query_type,
+        fusion_weights={"bm25": 1.0},
+        rank_diagnostics=diagnostics,
+        embed_cache_hits=embed_cache_hits,
+        embed_cache_misses=embed_cache_misses,
+    )
+
+
+def _ranking_from_sparse_payload(payload: Any, n_documents: int) -> list[int]:
+    if isinstance(payload, dict) and isinstance(payload.get("ranking"), list):
+        ranking = [int(i) for i in payload["ranking"]]
+        return [i for i in ranking if 0 <= i < n_documents]
+    if isinstance(payload, dict) and isinstance(payload.get("scores"), list):
+        scores = [float(s) for s in payload["scores"]]
+        if len(scores) == n_documents:
+            return _ranking_from_scores(scores)
+    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+        rows = payload["data"]
+        pairs = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if "index" in row and "score" in row:
+                idx = int(row["index"])
+                if 0 <= idx < n_documents:
+                    pairs.append((idx, float(row["score"])))
+        if pairs:
+            return [idx for idx, _score in sorted(pairs, key=lambda p: -p[1])]
+    return []
+
+
+def _bge_m3_sparse_rank(
+    query: str,
+    documents: list[str],
+    *,
+    endpoint: str,
+    model: str,
+) -> SparseRankResult:
+    try:
+        with httpx.Client(timeout=HTTP_TIMEOUT_S) as client:
+            response = client.post(
+                endpoint,
+                json={"model": model, "query": query, "documents": documents},
+            )
+            response.raise_for_status()
+            ranking = _ranking_from_sparse_payload(response.json(), len(documents))
+    except httpx.HTTPError as e:
+        return SparseRankResult(ranking=[], error=f"{type(e).__name__}: {e}")
+    except (TypeError, ValueError) as e:
+        return SparseRankResult(ranking=[], error=f"{type(e).__name__}: {e}")
+    if not ranking:
+        return SparseRankResult(ranking=[], error="empty sparse ranking")
+    return SparseRankResult(ranking=ranking)
+
+
 def retrieve(
     query: str,
     chunks: list[Chunk],
@@ -82,11 +307,17 @@ def retrieve(
     extra_query_texts: list[str] | None = None,
     hybrid: bool = False,
     chunk_budget: int = 0,
+    context_texts: list[str] | None = None,
 ) -> RetrievalResult:
     """Embed query + chunks, return the top-k chunks by cosine similarity.
 
     `extra_query_texts` allows passing HyDE outputs (or any extra reformulations)
     that will be averaged with the query embedding before scoring.
+
+    `context_texts`, when provided, must align one-to-one with `chunks`.
+    They are ranking-only inputs used for dense embedding, BM25 prefiltering,
+    and BM25 hybrid fusion. Returned `ScoredChunk.chunk` objects are the
+    original `Chunk` instances, so public output text remains unchanged.
 
     When `hybrid=True`, a BM25 ranking is computed over the same chunk
     texts and fused with the dense ranking via RRF. The `score` field
@@ -100,20 +331,39 @@ def retrieve(
     PDF). `n_chunks_embedded` on the result reports the post-prefilter
     count (equals `len(chunks)` when prefilter is a no-op).
     """
+    if context_texts is not None and len(context_texts) != len(chunks):
+        return RetrievalResult(
+            scored=[],
+            elapsed_ms=0,
+            embed_calls=0,
+            error=(
+                f"context_texts length {len(context_texts)} "
+                f"does not match chunks length {len(chunks)}"
+            ),
+            n_chunks_embedded=0,
+        )
+
     if not chunks:
         return RetrievalResult(scored=[], elapsed_ms=0, embed_calls=0, n_chunks_embedded=0)
 
     t0 = time.monotonic()
     embed_calls = 0
+    embed_cache_hits = 0
+    embed_cache_misses = 0
 
     # Embed the markdown-stripped `embed_text` so links/images don't
     # pollute the vectors. Heading path is still prepended because it
     # carries strong topical signal ("명량 해전" header tells the
     # embedding what the section is about even before the body).
-    chunk_texts = [
-        (c.heading + "\n\n" + (c.embed_text or c.text)) if c.heading else (c.embed_text or c.text)
-        for c in chunks
-    ]
+    if context_texts is not None:
+        chunk_texts = list(context_texts)
+    else:
+        chunk_texts = [
+            (c.heading + "\n\n" + (c.embed_text or c.text))
+            if c.heading
+            else (c.embed_text or c.text)
+            for c in chunks
+        ]
 
     # BM25 prefilter. Only runs when a positive budget is set and the
     # pool actually exceeds it; otherwise it's cheap no-op. We keep
@@ -133,18 +383,34 @@ def retrieve(
             q_embs = _embed_batch(client, base_url, model, query_inputs)
             embed_calls += 1
 
-            chunk_embs: list[list[float]] = []
-            for start in range(0, len(chunk_texts), EMBEDDING_BATCH):
-                batch = chunk_texts[start : start + EMBEDDING_BATCH]
-                chunk_embs.extend(_embed_batch(client, base_url, model, batch))
-                embed_calls += 1
+            contextual_mode = contextual.mode() if context_texts is not None else "off"
+            (
+                chunk_embs,
+                doc_embed_calls,
+                embed_cache_hits,
+                embed_cache_misses,
+            ) = _embed_documents_with_cache(
+                client,
+                base_url,
+                model,
+                chunk_texts,
+                contextual_mode=contextual_mode,
+            )
+            embed_calls += doc_embed_calls
     except httpx.HTTPError as e:
-        return RetrievalResult(
-            scored=[],
-            elapsed_ms=int((time.monotonic() - t0) * 1000),
+        embed_calls += int(getattr(e, "_trawl_doc_embed_calls", 0))
+        embed_cache_hits = int(getattr(e, "_trawl_embed_cache_hits", embed_cache_hits))
+        embed_cache_misses = int(getattr(e, "_trawl_embed_cache_misses", embed_cache_misses))
+        return _bm25_fallback_result(
+            query,
+            chunks,
+            chunk_texts,
+            k=k,
+            t0=t0,
             embed_calls=embed_calls,
+            embed_cache_hits=embed_cache_hits,
+            embed_cache_misses=embed_cache_misses,
             error=f"{type(e).__name__}: {e}",
-            n_chunks_embedded=len(chunks),
         )
 
     # Average query + extras into a single vector for scoring.
@@ -152,18 +418,50 @@ def retrieve(
 
     cosines = [cosine(avg_q, ce) for ce in chunk_embs]
 
+    query_type = _classify_query(query)
     if hybrid:
         dense_ranked = sorted(range(len(chunks)), key=lambda i: -cosines[i])
-        sparse_ranked = bm25_rank(query, chunk_texts)
-        fused = rrf_fuse([dense_ranked, sparse_ranked])
+        rankings = {
+            "dense": dense_ranked,
+            "bm25": bm25_rank(query, chunk_texts),
+        }
+        sparse_rank_error = None
+        sparse_endpoint = os.environ.get("TRAWL_BGE_M3_SPARSE_URL", "").strip()
+        if sparse_endpoint:
+            sparse_result = _bge_m3_sparse_rank(
+                query, chunk_texts, endpoint=sparse_endpoint, model=model
+            )
+            sparse_rank_error = sparse_result.error
+            if sparse_result.ranking:
+                rankings["bge_m3_sparse"] = sparse_result.ranking
+        weights = _fusion_weights(query_type, list(rankings))
+        fused, diagnostics_by_idx = _weighted_rrf_fuse(
+            rankings,
+            weights=weights,
+            k=int(os.environ.get("TRAWL_HYBRID_RRF_K", "60")),
+        )
         scored = [ScoredChunk(chunk=chunks[i], score=cosines[i]) for i in fused]
+        for idx, diagnostics in diagnostics_by_idx.items():
+            diagnostics["pool_index"] = idx
+            diagnostics["chunk_index"] = chunks[idx].chunk_index
+        rank_diagnostics = [diagnostics_by_idx[i] for i in fused[:k]]
     else:
         scored = [ScoredChunk(chunk=c, score=s) for c, s in zip(chunks, cosines, strict=True)]
         scored.sort(key=lambda s: -s.score)
+        weights = {"dense": 1.0}
+        rank_diagnostics = None
+        sparse_rank_error = None
 
     return RetrievalResult(
         scored=scored[:k],
         elapsed_ms=int((time.monotonic() - t0) * 1000),
         embed_calls=embed_calls,
         n_chunks_embedded=len(chunks),
+        retrieval_mode="hybrid" if hybrid else "dense",
+        query_type=query_type,
+        fusion_weights=weights,
+        rank_diagnostics=rank_diagnostics,
+        sparse_rank_error=sparse_rank_error,
+        embed_cache_hits=embed_cache_hits,
+        embed_cache_misses=embed_cache_misses,
     )

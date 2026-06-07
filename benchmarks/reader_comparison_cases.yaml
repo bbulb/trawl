@@ -1,0 +1,102 @@
+# Query-based reader comparison cases.
+#
+# These cases use stable pages and factual assertions that should not depend on
+# today's headlines or volatile prices. Each case defines failure classification
+# so every failed provider result can be attributed without post-hoc labels.
+
+cases:
+  - id: mdn_fetch_post
+    category: docs
+    url: "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch"
+    query: "how to make a POST request with the Fetch API"
+    expected_facts:
+      - id: fetch_call
+        any_of: ["fetch(", "fetch ("]
+      - id: post_method
+        any_of: ["POST", "method"]
+      - id: request_body
+        any_of: ["body", "JSON.stringify"]
+    failure_class:
+      on_fetch_error: fetch
+      on_empty_output: extraction
+      on_missing_facts: retrieval
+
+  - id: python_asyncio_task
+    category: docs
+    url: "https://docs.python.org/3/library/asyncio-task.html"
+    query: "how to create and await an async task in Python"
+    expected_facts:
+      - id: async_def
+        any_of: ["async def", "async "]
+      - id: await_task
+        any_of: ["await", "create_task", "gather"]
+      - id: task_object
+        any_of: ["Task", "Tasks"]
+    failure_class:
+      on_fetch_error: fetch
+      on_empty_output: extraction
+      on_missing_facts: retrieval
+
+  - id: react_usestate
+    category: docs
+    url: "https://react.dev/reference/react/useState"
+    query: "how to use useState hook in React"
+    expected_facts:
+      - id: usestate_name
+        any_of: ["useState"]
+      - id: state_pair
+        any_of: ["set function", "setState", "state variable"]
+      - id: initial_state
+        any_of: ["initial state", "initialState", "initial"]
+    failure_class:
+      on_fetch_error: fetch
+      on_empty_output: extraction
+      on_missing_facts: retrieval
+
+  - id: github_fastapi_readme
+    category: code
+    url: "https://github.com/fastapi/fastapi"
+    query: "how to install FastAPI and create a basic endpoint"
+    expected_facts:
+      - id: fastapi_name
+        any_of: ["FastAPI", "fastapi"]
+      - id: install
+        any_of: ["pip install", "fastapi[standard]", "fastapi"]
+      - id: endpoint_example
+        any_of: ["@app", "uvicorn", "import FastAPI"]
+    failure_class:
+      on_fetch_error: fetch
+      on_empty_output: extraction
+      on_missing_facts: retrieval
+
+  - id: wiki_large_language_model
+    category: wiki
+    url: "https://en.wikipedia.org/wiki/Large_language_model"
+    query: "how are large language models trained and what are key techniques"
+    expected_facts:
+      - id: transformer
+        any_of: ["transformer", "Transformer"]
+      - id: training
+        any_of: ["training", "pre-train", "fine-tun"]
+      - id: tokens_parameters
+        any_of: ["token", "parameter", "parameters"]
+    failure_class:
+      on_fetch_error: fetch
+      on_empty_output: extraction
+      on_missing_facts: retrieval
+
+  - id: stackoverflow_venv_virtualenv
+    category: qa
+    url: "https://stackoverflow.com/questions/41573587/what-is-the-difference-between-venv-pyvenv-pyenv-virtualenv-virtualenvwrapper"
+    query: "what is the difference between venv and virtualenv in Python"
+    expected_facts:
+      - id: venv
+        any_of: ["venv"]
+      - id: virtualenv
+        any_of: ["virtualenv"]
+      - id: python
+        any_of: ["Python", "python", "pip"]
+    failure_class:
+      on_fetch_error: fetch
+      on_empty_output: extraction
+      on_missing_facts: retrieval

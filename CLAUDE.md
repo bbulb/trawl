@@ -12,19 +12,22 @@ trawl directory. Humans should read `README.md` first, then
 
 ## Current status
 
-- **Version**: 0.4.4 (2026-04-22). Highlights since `v0.4.3`:
-  `TRAWL_CHUNK_BUDGET` default flipped from `0` (disabled) to `100`
-  (BM25 prefilter on) (PR #46) — closes future-work item #4 from the
-  longform-retrieval-cost design and resolves the
-  `claude_code_man_curl_options` curl.se manpage latency regression
-  (p95 25149 → 3065 ms, 88 %). Also ships the CJK per-doc cap
-  validation spike (PR #45, research-only). Previously shipped in
-  0.4.3: per-document char cap on the reranker payload
-  (`TRAWL_RERANK_MAX_PER_DOC_CHARS=1500` default, PR #43). Full list
-  in `CHANGELOG.md`.
+- **Version**: 0.4.5 (2026-06-07). Highlights: indirect
+  prompt-injection defense default on (`TRAWL_INJECTION_SCAN`),
+  hybrid dense+BM25 retrieval default on (`TRAWL_HYBRID_RETRIEVAL`),
+  document embedding cache default on (`TRAWL_EMBED_CACHE_TTL=3600`,
+  warm retrieval p95 −96.2%), Wikipedia heading-preservation fix,
+  `trawl-doctor` health check, BM25-only degraded fallback when the
+  embedding endpoint is down, MCP browser/general worker separation,
+  fetch-cache ETag/Last-Modified revalidation, opt-in contextual
+  retrieval + Scrapling fallback. Full list in `CHANGELOG.md`.
 - **Parity matrix**: 15/15 cases pass (see `tests/test_cases.yaml`).
   `kbo_schedule` pinned to a historical game day to survive KBO
-  off-days.
+  off-days. `wanted_jobs` asserts the structural marker `합격보상금`
+  only (PR #72) — live job-board titles rotate spelling hourly.
+- **Agent patterns**: 110 patterns across 8 shards; full run
+  101 PASS + 9 SKIP (`live: optional` anti-bot/DDG/VLM draws),
+  required FAIL 0. Coding shard 24/24.
 - **Profile eval**: 36-site evaluation — 92% success rate, 16/36 IDEAL
   selectors.
 - **Benchmark vs Jina Reader**: ~23x fewer tokens on average across 12
@@ -110,20 +113,44 @@ trawl directory. Humans should read `README.md` first, then
     Disable via `TRAWL_FETCH_CACHE_TTL=0`; relocate via
     `TRAWL_FETCH_CACHE_PATH`; size cap via `TRAWL_FETCH_CACHE_MAX_MB`
     (default 100). `PipelineResult.cache_hit` flags the reuse.
+  - **Document embedding cache** (**default on since 2026-05-19**,
+    opt-out via `TRAWL_EMBED_CACHE_TTL=0`) — successful chunk
+    embeddings are cached in `~/.cache/trawl/embeddings/<sha256>.json`
+    for `TRAWL_EMBED_CACHE_TTL` seconds (default 3600). Cache key
+    partitions on model, base_url, text_sha256, contextual_mode,
+    `prefix_max_chars`, `prefix_version`, and `SCHEMA_VERSION` so
+    text edits / contextual on/off / model swaps all miss naturally.
+    Disk cap via `TRAWL_EMBED_CACHE_MAX_MB` (default 512 MB) with LRU
+    trim at 20 % headroom; relocate via `TRAWL_EMBED_CACHE_PATH`.
+    `PipelineResult.embed_cache_hits` / `embed_cache_misses` and the
+    opt-in telemetry JSONL surface per-call counters. Warm-repeat
+    measurement on 6 reader-comparison URLs: cold avg retrieval 1503
+    ms → warm 57 ms (−96.2 %). See
+    `docs/superpowers/specs/2026-05-18-embed-cache-default-on-design.md`.
   - **Per-host adaptive ceiling** (C9, default on) — Playwright's
     content-ready wait ceiling becomes `p95(host) × 1.5` once 5
     observations accumulate, clamped to `[1500, 15000] ms`. New hosts
     use the static 5000 ms default. Stats in
     `~/.cache/trawl/host_stats.json`. Disable via `TRAWL_HOST_STATS=0`.
-  - **Hybrid dense + BM25 retrieval** (C6, **default off**, opt-in) —
-    `TRAWL_HYBRID_RETRIEVAL=1` enables BM25 lexical ranking alongside
-    dense cosine, fused via Reciprocal Rank Fusion (`k=60`). Tokenizer
-    is rule-based multilingual (Latin word / Hangul bigram / CJK char)
-    in `src/trawl/bm25.py`. Reranker window unchanged (2x candidates).
-    Baseline parity (15/15) preserved in both modes; RRF at k=60 was
-    conservative in the `code_heavy_query` A/B measurement (no content
-    regression, no assertion wins). Tune via `TRAWL_HYBRID_RRF_K`
-    (default 60). See `notes/c6-hybrid-measurement.md` for A/B results.
+  - **Hybrid dense + BM25 retrieval** (C6, **default on since
+    2026-05-19**, opt-out via `TRAWL_HYBRID_RETRIEVAL=0`) —
+    BM25 lexical ranking runs alongside dense cosine, fused via
+    Reciprocal Rank Fusion (`k=60`). Tokenizer is rule-based
+    multilingual (Latin word / Hangul bigram / CJK char) in
+    `src/trawl/bm25.py`. Reranker window unchanged (2x candidates).
+    Tune via `TRAWL_HYBRID_RRF_K` (default 60).
+    Initial C6 A/B (PR #29) on `code_heavy_query` was conservative
+    (no wins, no regression) — that conclusion holds for that
+    surface. The default flip is justified by a `reader_comparison`
+    A/B at 2026-05-19 (`hybrid_default_on_spike.py`) that PASSed
+    all 6 pre-registered gates after a companion wiki-fetcher
+    heading-preservation fix: reader-comp hybrid 6/6 vs dense 5/6
+    (`wiki_large_language_model` saved by BM25 fusion), parity 15/15
+    + coding 24/24 in both modes, Korean 3/3, code_heavy_query
+    regression 0, retrieval p95 +1.3%. See
+    `notes/c6-hybrid-measurement.md` (original C6) and
+    `notes/hybrid-default-on-spike-outcome.md` (default-flip
+    measurement).
   - **Chunk budget prefilter** (longform follow-up, **default on since
     2026-04-22**, opt-out via `TRAWL_CHUNK_BUDGET=0`) —
     `TRAWL_CHUNK_BUDGET=100` is the default; any positive int caps the
@@ -139,6 +166,23 @@ trawl directory. Humans should read `README.md` first, then
     reports the post-prefilter count. See
     `docs/superpowers/specs/2026-04-20-longform-retrieval-cost-design.md`
     and `docs/superpowers/specs/2026-04-22-chunk-budget-default-on-design.md`.
+  - **Indirect prompt-injection defense** (default on, opt out via
+    `TRAWL_INJECTION_SCAN=0`) — `src/trawl/sanitize.py` runs a
+    model-free scan per fetch (`pipeline._scan_injection`, both the
+    full-retrieval and profile return paths): strips Unicode tag chars
+    (U+E0000–E007F), flags instruction-like chunks
+    (`suspicious_injection`) and instruction-like CSS-hidden /
+    off-screen / aria-hidden segments (`suspicious_hidden`) —
+    annotate, never delete. Signals land in `PipelineResult.warnings`;
+    flag keys appear on a chunk only when true. MCP `fetch_page` /
+    `profile_page` carry `openWorldHint` + `readOnlyHint` annotations
+    plus the existing `content_boundary` response field. The
+    CSS-hidden branch is gated on the instruction-pattern matcher so
+    benign hidden content (sr-only text, collapsed menus) does not warn
+    — load-bearing for the benign-0-flag gate; do not loosen without a
+    companion false-positive check. Cost <1% on a 198 KB / 600-chunk
+    page. See
+    `docs/superpowers/specs/2026-06-05-injection-defense-design.md`.
   - **Shadow-DOM unwrap for code-block custom elements** (default on)
     — `fetchers/playwright.py` inlines each matching element's
     `shadowRoot`'s `pre > code` textContent (wrapped in a fresh

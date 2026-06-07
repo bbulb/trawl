@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 _GH_API_BASE = "https://api.github.com"
 _GH_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+_BROWSER_FALLBACK_REQUIRED = "browser fallback required"
 
 
 def matches(url: str) -> bool:
@@ -114,7 +115,11 @@ def _fetch_blob(client: httpx.Client, owner: str, repo: str, ref: str, path: str
     return base64.b64decode(content_b64).decode("utf-8")
 
 
-def fetch(url: str) -> FetchResult:
+def _browser_fallback_result(url: str, t0: float, reason: str) -> FetchResult:
+    return make_error_result(url, "github", t0, f"{_BROWSER_FALLBACK_REQUIRED}: {reason}")
+
+
+def fetch(url: str, *, allow_browser_fallback: bool = True) -> FetchResult:
     """Fetch GitHub content via the REST API.
 
     Supports repo READMEs, issues, PRs, and file blobs.
@@ -139,11 +144,15 @@ def fetch(url: str) -> FetchResult:
             elif kind == "blob":
                 markdown = _fetch_blob(client, owner, repo, params["ref"], params["path"])
             else:
-                return pw.fetch(url)
+                if allow_browser_fallback:
+                    return pw.fetch(url)
+                return _browser_fallback_result(url, t0, f"unsupported GitHub URL kind: {kind}")
 
         if not markdown.strip():
             logger.info("empty content from GitHub API for %s, falling back", url)
-            return pw.fetch(url)
+            if allow_browser_fallback:
+                return pw.fetch(url)
+            return _browser_fallback_result(url, t0, "empty content from GitHub API")
 
         return FetchResult(
             url=url,
@@ -161,4 +170,6 @@ def fetch(url: str) -> FetchResult:
             e,
         )
 
-    return pw.fetch(url)
+    if allow_browser_fallback:
+        return pw.fetch(url)
+    return _browser_fallback_result(url, t0, "GitHub API failed")

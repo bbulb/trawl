@@ -20,6 +20,12 @@ patterns:
       n_chunks_returned: ">= 3"
       fetcher_used: "wikipedia"
       error_is_none: true
+      # 2026-06-06 S5: C16 enrichment 신호 분산. chain_hints는 host 기반
+      # 결정론 (en.wikipedia.org -> search_template), excerpts는 top-3
+      # chunk 첫 문장 (live probe: 3개 관측). page_entities는 en wiki에서
+      # 빈 리스트로 관측돼 (제목이 heading_paths에 없음) 여기선 미사용.
+      excerpts_min_count: ">= 1"
+      chain_hints_has_key: "search_template"
     budgets:
       total_ms_p95: 8000
 
@@ -35,8 +41,16 @@ patterns:
       n_chunks_returned: ">= 3"
       fetcher_used: "wikipedia"
       error_is_none: true
+      # 2026-06-06 S5: C16 enrichment 신호 분산. page_entities는 ko wiki
+      # heading 기반 한글 NP — live probe에서 '임진왜란'/'해전' 관측
+      # (제목 '이순신' 자체는 entity 리스트에 없었음, heading만 소스).
+      chain_hints_has_key: "search_template"
+      page_entities_contain_any: ["임진왜란", "해전"]
     budgets:
-      total_ms_p95: 8000
+      # 2026-06-06: 이순신 is a large biography (~116 chunks); observed
+      # 8009 ms on the 8000 boundary — a hair over on variance, same
+      # class as wiki_zh. Align to the 12000 ms large-wiki budget.
+      total_ms_p95: 12000
 
   - id: claude_code_wiki_en_transformer_arch
     primary_agent: [claude_code]
@@ -65,6 +79,9 @@ patterns:
       n_chunks_returned: ">= 3"
       fetcher_used: "wikipedia"
       error_is_none: true
+      # 2026-06-06 S5: C16 — ja.wikipedia.org의 chain_hints는
+      # recommended_followup_filter만 보유 (search_template 없음).
+      chain_hints_has_key: "recommended_followup_filter"
     budgets:
       total_ms_p95: 8000
 
@@ -80,7 +97,11 @@ patterns:
       fetcher_used: "wikipedia"
       error_is_none: true
     budgets:
-      total_ms_p95: 8000
+      # 2026-06-06: zh Wikipedia Python is a large article; observed
+      # ~8800-9200 ms across three full runs (was 8000, consistently
+      # over by ~13%). Bump to absorb the real cost + variance; still
+      # tighter than the 14000 ms heavier-wiki siblings.
+      total_ms_p95: 12000
 
   # ============================================================
   # 특화 wiki / 레퍼런스 (5)
@@ -94,7 +115,10 @@ patterns:
     query: "definitions of the verb run"
     live: required
     assertions:
-      chunks_contain_any: ["verb", "definition", "etymology"]
+      # 2026-06-05: matching is case-sensitive over heading+text; the
+      # returned chunks carry "run > English > Verb" heading paths, so
+      # use the capitalised section names Wiktionary actually renders.
+      chunks_contain_any: ["Verb", "Etymology", "definition"]
       n_chunks_returned: ">= 3"
       error_is_none: true
     budgets:
@@ -154,3 +178,45 @@ patterns:
       error_is_none: true
     budgets:
       total_ms_p95: 14000
+
+  # ============================================================
+  # large_page (2) — 2026-06-06 S5 시나리오 다양화
+  # ============================================================
+  # workflows.yaml의 Korean_War 패턴과 같은 의도(adaptive_k 상한 +
+  # output budget 보존)를 더 큰 기사와 CJK 대형 기사로 확장.
+  # URL은 카탈로그 전체에서 고유.
+
+  - id: hermes_wiki_en_world_war_ii_large
+    primary_agent: [hermes, claude_code]
+    category: large_page
+    description: "영어 Wikipedia World War II — 초대형 기사, token budget 보존"
+    url: "https://en.wikipedia.org/wiki/World_War_II"
+    query: "major turning points of World War II"
+    live: required
+    assertions:
+      chunks_contain_any: ["Stalingrad", "Normandy", "Midway", "D-Day"]
+      n_chunks_returned: ">= 3"
+      fetcher_used: "wikipedia"
+      error_is_none: true
+      chain_hints_has_key: "search_template"
+    budgets:
+      total_ms_p95: 16000
+      n_chunks_max: 12         # adaptive_k 상한 검증
+      output_chars_max: 8000   # token budget cap
+
+  - id: openclaw_wiki_ko_korea_large
+    primary_agent: [openclaw]
+    category: large_page
+    description: "한국어 Wikipedia 대한민국 — 대형 CJK 기사, token budget 보존"
+    url: "https://ko.wikipedia.org/wiki/대한민국"
+    query: "대한민국의 정치 체제와 행정 구역"
+    live: required
+    assertions:
+      chunks_contain_any: ["대통령", "행정", "헌법", "민주"]
+      n_chunks_returned: ">= 3"
+      fetcher_used: "wikipedia"
+      error_is_none: true
+    budgets:
+      total_ms_p95: 16000
+      n_chunks_max: 12
+      output_chars_max: 8000

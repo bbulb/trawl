@@ -28,6 +28,9 @@ tests/agent_patterns/
 
 ```bash
 # 전체 (live mode — bge-m3 endpoint 필요)
+# live run은 기본적으로 임시 디렉터리로 trawl 상태(프로파일·방문수·
+# fetch/embed 캐시·host stats)를 격리해 cold start를 보장한다.
+# 로컬 ~/.cache/trawl 상태를 그대로 쓰려면 --no-isolation.
 mamba run -n trawl python tests/test_agent_patterns.py
 
 # shard / 단건 / 카테고리 / agent 별 필터
@@ -61,6 +64,10 @@ mamba run -n trawl python tests/test_agent_patterns.py --regression
   url: "https://..."
   query: "자연어 쿼리 (passthrough는 생략 가능)"
   live: required | optional | never                  # default: required
+  # `optional`: 패턴은 항상 실행되지만 실패가 SKIP(경고)으로 분류되어
+  # exit code에 반영되지 않음. anti-bot/geo-block 등 사이트 사정으로
+  # 결과가 불안정한 URL에 사용 — 사유를 인라인 주석으로 남길 것.
+  # `never`: 예약됨 (fixture 실행 모드, 미구현 — 현재는 live와 동일).
   assertions:
     chunks_contain_any: ["a", "b"]                   # 둘 중 하나라도 등장하면 OK
     n_chunks_returned: ">= 3"
@@ -97,10 +104,27 @@ mamba run -n trawl python tests/test_agent_patterns.py --regression
 `ref: <step_idx>` 만 지원 (MVP). 동적 capture/template (`{{chunks[0].text}}`)
 은 후속 PR.
 
+`op: profile_page` step은 **암묵적 성공 체크**를 받는다:
+`generate_profile()`이 `{ok: false, stage, error}` 를 반환하면 해당
+step이 assertion 없이도 실패로 기록된다 (silent failure가 다음 step의
+`profile_used` 실패로 둔갑하는 것을 방지). 프로파일 실패 자체를
+검증하려는 패턴은 `error_contains` assertion을 명시하면 암묵 체크가
+비활성화된다.
+
 ## ID 규칙
 
 `<primary_agent>_<topic>_<intent>` 형태. shard 안에서, 그리고 모든 shard
 횡단으로 고유해야 한다 (`loader._load_one` 가 검사).
+
+## Stateful 패턴의 URL 고유성 규칙
+
+visit count / cache_hit / suggest_profile 에 의존하는 패턴(주로
+workflows.yaml의 repeat_visits·host_transfer)의 URL은 **카탈로그 전체에서
+고유**해야 한다. 전체 run은 격리된 상태 디렉터리 하나를 공유하므로, 같은
+URL을 다른 shard가 먼저 방문하면 방문 수·캐시가 선적립되어 시나리오의
+step별 가정이 깨진다 (2026-06-05 naver sise_market_sum 사례: finance
+shard 방문 1회 → workflows step 1의 `suggest_profile: false` off-by-one
+실패).
 
 ## Assertion / Budget DSL 키 화이트리스트
 

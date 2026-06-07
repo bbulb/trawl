@@ -18,9 +18,16 @@ Invoke:
     python tests/test_agent_patterns.py --dry-run               # schema only
     python tests/test_agent_patterns.py --baseline              # write budgets
     python tests/test_agent_patterns.py --regression            # +20% gate
-    python tests/test_agent_patterns.py --repeats 3             # p95 latency
+    python tests/test_agent_patterns.py --repeats 3             # p95 latency (single-op only;
+                                                                # multi-op scripts always run once)
+    python tests/test_agent_patterns.py --no-isolation          # reuse ~/.cache/trawl
 
-Exit code 0 iff every selected pattern passes.
+Live runs default to a fresh temp-dir trawl state (profiles, visit
+counts, fetch/embed caches, host stats) so stateful patterns start
+cold; `--no-isolation` opts back into the ambient ~/.cache/trawl.
+
+Exit code 0 iff every selected `live: required` pattern passes
+(failing `live: optional` patterns count as SKIP).
 
 See `docs/superpowers/specs/2026-04-19-agent-patterns-design.md` for
 design rationale.
@@ -30,9 +37,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import statistics
 import sys
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -86,6 +95,7 @@ class PatternOutcome:
     category: str
     repeats: int
     total_ms_p95: int
+    live: str = "required"
     steps: list[StepOutcome] = field(default_factory=list)
     error: str | None = None
 
@@ -94,7 +104,19 @@ class PatternOutcome:
         if self.error:
             return False
         return all(not s.assertion_failures and not s.budget_failures for s in self.steps)
-        return all(not s.assertion_failures and not s.budget_failures for s in self.steps)
+
+    @property
+    def status(self) -> str:
+        """PASS / FAIL / SKIP.
+
+        A failing `live: optional` pattern is reported as SKIP: the
+        site is known-unstable (anti-bot, geo-blocking), so its failure
+        is surfaced as a warning instead of failing the run. Failures
+        of `live: required` patterns stay FAIL and drive the exit code.
+        """
+        if self.passed:
+            return "PASS"
+        return "SKIP" if self.live == "optional" else "FAIL"
 
 
 # Filtering -----------------------------------------------------------
@@ -121,6 +143,37 @@ def _filter_patterns(
     if limit:
         out = out[:limit]
     return out
+
+
+# State isolation ------------------------------------------------------
+
+# Catalog assertions assume a cold local state: repeat_visits patterns
+# build their own C8 cache hits and visit counts step by step, and
+# host_transfer patterns create their own profile via a profile_page
+# step. A developer machine usually has profiles / caches left over
+# from earlier sessions (e.g. a cached pypi.org profile routes
+# fetch_page through the profile fast path, bypassing the fetch cache
+# and suggest_profile entirely), which silently flips those patterns.
+# Isolation points every trawl state file at a fresh temp dir so a run
+# starts cold by construction. Env vars must be set BEFORE the lazy
+# `from trawl import ...` in _run_operation: several path constants
+# (TRAWL_PROFILE_DIR, TRAWL_VISITS_FILE) are read at import time.
+
+_ISOLATION_ENV = {
+    "TRAWL_PROFILE_DIR": "profiles",
+    "TRAWL_VISITS_FILE": "visits.json",
+    "TRAWL_FETCH_CACHE_PATH": "fetches",
+    "TRAWL_EMBED_CACHE_PATH": "embeddings",
+    "TRAWL_HOST_STATS_PATH": "host_stats.json",
+}
+
+
+def _setup_isolation() -> Path:
+    """Point all trawl state paths at a fresh temp dir; return it."""
+    root = Path(tempfile.mkdtemp(prefix="trawl-agent-patterns-"))
+    for var, rel in _ISOLATION_ENV.items():
+        os.environ[var] = str(root / rel)
+    return root
 
 
 # Operation runner ----------------------------------------------------
@@ -210,7 +263,7 @@ def _evaluate_assertions(
             if actual != expected:
                 fails.append(f"path: expected {expected!r}, got {actual!r}")
         elif key == "fetcher_used":
-            actual = measurements.get("fetcher")
+            actual = measurements.get("fetcher_used")
             if actual != expected:
                 fails.append(f"fetcher_used: expected {expected!r}, got {actual!r}")
         elif key == "error_is_none":
@@ -294,6 +347,19 @@ def _evaluate_budgets(
 # Pattern runner ------------------------------------------------------
 
 
+def _effective_repeats(pattern: Pattern, repeats: int) -> int:
+    """Multi-op patterns always run once.
+
+    Their steps are a stateful script (visit counts, C8 cache hits,
+    profile creation accumulate step to step), so repeating each step
+    N times corrupts the scenario the assertions encode — e.g. step 0
+    fetched 3 times pushes the visit count past the suggest_profile
+    threshold before step 1 even runs. Latency p95 via --repeats is a
+    single-op concern; multi-op budgets assert on the one scripted run.
+    """
+    return 1 if pattern.is_multi_op else repeats
+
+
 def _run_pattern(
     pattern: Pattern,
     *,
@@ -301,12 +367,14 @@ def _run_pattern(
     repeats: int,
     verbose: bool,
 ) -> PatternOutcome:
+    repeats = _effective_repeats(pattern, repeats)
     outcome = PatternOutcome(
         id=pattern.id,
         shard=pattern.shard,
         category=pattern.category,
         repeats=repeats if not dry_run else 0,
         total_ms_p95=0,
+        live=pattern.live,
     )
 
     try:
@@ -328,10 +396,8 @@ def _run_pattern(
         for step in steps:
             url, query = _resolve_step(step, outcome.steps)
 
-            # Repeat measurements (only meaningful for live + the final step
-            # of single-op patterns; for multi-op we only repeat the last
-            # step that has a budget — keep it simple and repeat each step
-            # the same way).
+            # Repeat measurements for latency p95 (single-op patterns
+            # only — _effective_repeats clamps multi-op to one run).
             measurements: dict[str, Any] = {}
             elapsed_samples: list[int] = []
             for _ in range(repeats):
@@ -343,6 +409,10 @@ def _run_pattern(
             assertion_failures = (
                 _evaluate_assertions(step.assertions, measurements) if not dry_run else []
             )
+            if not dry_run and step.op == "profile_page":
+                assertion_failures = (
+                    _check_profile_step(step.assertions, measurements) + assertion_failures
+                )
             budget_failures = (
                 _evaluate_budgets(step.budgets, measurements, elapsed_p95) if not dry_run else []
             )
@@ -365,6 +435,25 @@ def _run_pattern(
     return outcome
 
 
+def _check_profile_step(assertions: dict[str, Any], measurements: dict[str, Any]) -> list[str]:
+    """Implicit success check for profile_page steps.
+
+    generate_profile() reports failure as structured data
+    (`{ok: False, stage, error, notes}`) instead of raising, so without
+    this check a failed profile step passes silently and only the NEXT
+    step's profile_used assertion fails, pointing at the wrong step.
+    A pattern that intentionally asserts a profile failure can opt out
+    by declaring an explicit `error_contains` assertion.
+    """
+    if "error_contains" in assertions:
+        return []
+    if measurements.get("ok") is False:
+        stage = measurements.get("stage", "?")
+        error = measurements.get("error", "")
+        return [f"profile_page failed at stage={stage}: {error}"]
+    return []
+
+
 def _p95(samples: list[int]) -> float:
     if not samples:
         return 0.0
@@ -379,7 +468,7 @@ def _p95(samples: list[int]) -> float:
 
 
 def _print_pattern_summary(outcome: PatternOutcome, *, verbose: bool) -> None:
-    status = "PASS" if outcome.passed else "FAIL"
+    status = outcome.status
     head = f"[{status}] {outcome.shard}/{outcome.id} ({outcome.category})"
     if outcome.repeats:
         head += f"  total_p95={outcome.total_ms_p95}ms (repeats={outcome.repeats})"
@@ -426,7 +515,47 @@ def _write_results(outcomes: list[PatternOutcome], *, results_dir: Path) -> Path
             continue
         (fdir / f"{o.id}.md").write_text(_render_failure(o), encoding="utf-8")
 
+    # budget_diff.md — latency vs baseline.json (when a baseline exists)
+    diff = _render_budget_diff(outcomes)
+    if diff:
+        (out_dir / "budget_diff.md").write_text(diff, encoding="utf-8")
+
     return out_dir
+
+
+def _render_budget_diff(outcomes: list[PatternOutcome]) -> str | None:
+    """Markdown table of per-pattern latency vs baseline, worst first."""
+    baseline = _load_baseline()
+    if not baseline:
+        return None
+    rows: list[tuple[float, str]] = []
+    for o in outcomes:
+        prev = baseline.get(o.id)
+        prev_ms = int(prev.get("total_ms_p95") or 0) if prev else 0
+        if prev_ms <= 0 or o.total_ms_p95 <= 0:
+            continue
+        delta_pct = (o.total_ms_p95 - prev_ms) / prev_ms * 100
+        rows.append(
+            (
+                delta_pct,
+                f"| `{o.id}` | {prev_ms}ms | {o.total_ms_p95}ms | {delta_pct:+.1f}% |",
+            )
+        )
+    if not rows:
+        return None
+    rows.sort(key=lambda r: r[0], reverse=True)
+    lines = [
+        "# Budget diff vs baseline",
+        "",
+        f"- {len(rows)} pattern(s) present in both this run and baseline.json",
+        f"- regression gate: +{int((REGRESSION_TOLERANCE - 1) * 100)}% (--regression)",
+        "",
+        "| pattern | baseline | current | delta |",
+        "|---|---|---|---|",
+        *(r[1] for r in rows),
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def _outcome_to_dict(o: PatternOutcome) -> dict:
@@ -442,10 +571,12 @@ def _render_summary(outcomes: list[PatternOutcome]) -> str:
 
     total = len(outcomes)
     passed = sum(1 for o in outcomes if o.passed)
+    skipped = sum(1 for o in outcomes if o.status == "SKIP")
     lines = [
         "# Agent patterns — run summary",
         "",
-        f"- Total: **{passed}/{total}** patterns passed",
+        f"- Total: **{passed}/{total}** patterns passed"
+        + (f", {skipped} skipped (`live: optional`)" if skipped else ""),
         "",
     ]
     for shard in sorted(by_shard):
@@ -456,16 +587,20 @@ def _render_summary(outcomes: list[PatternOutcome]) -> str:
         lines.append("| pattern | category | result | total_p95 |")
         lines.append("|---|---|---|---|")
         for o in items:
-            status = "PASS" if o.passed else "FAIL"
-            lines.append(f"| `{o.id}` | {o.category} | {status} | {o.total_ms_p95}ms |")
-            lines.append(f"| `{o.id}` | {o.category} | {status} | {o.total_ms_p95}ms |")
+            lines.append(f"| `{o.id}` | {o.category} | {o.status} | {o.total_ms_p95}ms |")
         lines.append("")
     return "\n".join(lines)
 
 
 def _render_failure(o: PatternOutcome) -> str:
-    lines = [f"# {o.id} — FAIL", "", f"- shard: `{o.shard}`", f"- category: `{o.category}`", ""]
-    lines = [f"# {o.id} — FAIL", "", f"- shard: `{o.shard}`", f"- category: `{o.category}`", ""]
+    lines = [
+        f"# {o.id} — {o.status}",
+        "",
+        f"- shard: `{o.shard}`",
+        f"- category: `{o.category}`",
+        f"- live: `{o.live}`",
+        "",
+    ]
     if o.error:
         lines += ["## error", "", "```", o.error, "```", ""]
     for i, step in enumerate(o.steps):
@@ -563,6 +698,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run", action="store_true", help="schema validation + filter, no live fetches"
     )
     p.add_argument(
+        "--no-isolation",
+        action="store_true",
+        help="reuse the ambient ~/.cache/trawl state instead of a fresh temp dir "
+        "(live runs default to isolated state so repeat_visits/host_transfer "
+        "patterns start cold)",
+    )
+    p.add_argument(
         "--baseline", action="store_true", help="write current p95 measurements as new baseline"
     )
     p.add_argument(
@@ -605,6 +747,17 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  [{p.shard}] {p.id} ({p.category}) — {p.description[:80]}")
         return 0
 
+    if not args.no_isolation:
+        iso_root = _setup_isolation()
+        print(f"isolated trawl state: {iso_root}")
+
+    if args.repeats > 1 and any(p.is_multi_op for p in selected):
+        n_multi = sum(1 for p in selected if p.is_multi_op)
+        print(
+            f"note: --repeats={args.repeats} applies to single-op patterns only; "
+            f"{n_multi} multi-op pattern(s) run once (stateful step scripts)"
+        )
+
     outcomes = [
         _run_pattern(p, dry_run=False, repeats=args.repeats, verbose=args.verbose) for p in selected
     ]
@@ -617,13 +770,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.baseline:
         _write_baseline(outcomes)
 
-    failed = [o for o in outcomes if not o.passed]
+    failed = [o for o in outcomes if o.status == "FAIL"]
+    skipped = [o for o in outcomes if o.status == "SKIP"]
     regressions = _check_regression(outcomes) if args.regression else []
     for r in regressions:
         print(f"REGRESSION: {r}", file=sys.stderr)
 
     print(
-        f"\n{len(outcomes) - len(failed)}/{len(outcomes)} pass"
+        f"\n{len(outcomes) - len(failed) - len(skipped)}/{len(outcomes)} pass"
+        + (f", {len(skipped)} skipped (live: optional)" if skipped else "")
         + (f", {len(regressions)} regression(s)" if regressions else "")
     )
 

@@ -65,6 +65,8 @@ def test_build_event_fields():
     assert event["fetch_ms"] == 100
     assert event["total_ms"] == 140
     assert event["n_chunks_total"] == 7
+    assert event["embed_cache_hits"] == 0
+    assert event["embed_cache_misses"] == 0
     assert event["error"] is None
     assert "ts" in event and event["ts"].endswith("Z")
     # Must NOT contain raw query, chunks, or hyde_text
@@ -79,6 +81,65 @@ def test_build_event_propagates_rerank_capped_true():
     r.rerank_capped = True
     event = telemetry._build_event(r)
     assert event["rerank_capped"] is True
+
+
+def test_build_event_includes_retrieval_diagnostics_summary():
+    r = _sample_result()
+    r.retrieval_diagnostics = {
+        "mode": "hybrid",
+        "query_type": "identifier",
+        "weights": {"dense": 0.8, "bm25": 1.2, "bge_m3_sparse": 1.2},
+        "rankers": ["dense", "bm25", "bge_m3_sparse"],
+        "chunks": [
+            {
+                "chunk_index": 2,
+                "ranks": {"dense": 2, "bm25": 0, "bge_m3_sparse": 0},
+                "contributions": {
+                    "dense": 0.0129,
+                    "bm25": 0.02,
+                    "bge_m3_sparse": 0.02,
+                },
+            }
+        ],
+    }
+
+    event = telemetry._build_event(r)
+
+    assert event["retrieval_mode"] == "hybrid"
+    assert event["retrieval_query_type"] == "identifier"
+    assert event["retrieval_rankers"] == ["dense", "bm25", "bge_m3_sparse"]
+    assert event["retrieval_fusion_weights"] == {
+        "dense": 0.8,
+        "bm25": 1.2,
+        "bge_m3_sparse": 1.2,
+    }
+    assert event["retrieval_rank_diagnostics"][0]["chunk_index"] == 2
+    assert "text" not in event["retrieval_rank_diagnostics"][0]
+
+
+def test_build_event_includes_contextual_retrieval_stats():
+    r = _sample_result()
+    r.contextual_retrieval_used = True
+    r.context_prefix_chars_total = 123
+    r.context_prefix_chars_avg = 41.0
+
+    event = telemetry._build_event(r)
+
+    assert event["contextual_retrieval_used"] is True
+    assert event["context_prefix_chars_total"] == 123
+    assert event["context_prefix_chars_avg"] == 41.0
+    assert "context_texts" not in event
+
+
+def test_build_event_includes_embedding_cache_metrics():
+    r = _sample_result()
+    r.embed_cache_hits = 2
+    r.embed_cache_misses = 5
+
+    event = telemetry._build_event(r)
+
+    assert event["embed_cache_hits"] == 2
+    assert event["embed_cache_misses"] == 5
 
 
 def test_record_appends_jsonl(tmp_path: Path, monkeypatch):

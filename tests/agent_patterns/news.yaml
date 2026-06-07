@@ -97,7 +97,7 @@ patterns:
     description: "Reuters World — 통신사 톤"
     url: "https://www.reuters.com/world/"
     query: "latest world news"
-    live: required
+    live: optional       # 2026-06-05: anti-bot — 'empty markdown after extraction'
     assertions:
       n_chunks_returned: ">= 3"
       error_is_none: true
@@ -158,6 +158,9 @@ patterns:
       chunks_contain_any: ["points by", "comment"]
       n_chunks_returned: ">= 3"
       error_is_none: true
+      # 2026-06-06 S5: C16 enrichment 신호 분산 — excerpts는 top-3 chunk의
+      # 첫 문장이므로 chunks >= 3이면 >= 1이 성립 (live probe: 3개 관측).
+      excerpts_min_count: ">= 1"
     budgets:
       total_ms_p95: 12000
 
@@ -190,12 +193,15 @@ patterns:
   - id: openclaw_news_hada_io
     primary_agent: [openclaw, claude_code]
     category: single_fetch
-    description: "뉴스해다 메인 — 한국 dev/startup aggregator"
+    description: "GeekNews 메인 — 한국 dev/startup aggregator (news.hada.io)"
     url: "https://news.hada.io/"
     query: "최근 IT 스타트업 뉴스"
     live: required
     assertions:
-      chunks_contain_any: ["points by", "댓글"]
+      # 2026-06-05: aligned with parity hada_news (PR #49) — site
+      # rebranded to "GeekNews" and dropped the "points by" / "댓글"
+      # labels on the home page. Same stable markers as parity.
+      chunks_contain_any: ["GeekNews", "topic?id"]
       n_chunks_returned: ">= 5"
       error_is_none: true
     budgets:
@@ -213,3 +219,21 @@ patterns:
       error_is_none: true
     budgets:
       total_ms_p95: 16000
+
+  # ============================================================
+  # error_handling (1) — 2026-06-06 S5 시나리오 다양화
+  # ============================================================
+
+  - id: openclaw_error_dead_news_article
+    primary_agent: [openclaw]
+    category: error_handling
+    description: "삭제/오기입 연합뉴스 기사 URL — 404에서도 크래시 없이 graceful"
+    # openclaw가 큐레이션해 둔 오래된 기사 링크가 죽는 흔한 케이스.
+    # 사이트가 404 페이지를 주든 메인으로 redirect하든 크래시만 없으면 됨.
+    url: "https://www.yna.co.kr/view/AKR00000000000000000"
+    query: "이 기사 내용 요약"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 0"
+    budgets:
+      total_ms_p95: 18000

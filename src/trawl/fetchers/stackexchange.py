@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 _SE_API_BASE = "https://api.stackexchange.com/2.3"
 _SE_API_KEY = os.environ.get("TRAWL_SE_API_KEY", "")
+_BROWSER_FALLBACK_REQUIRED = "browser fallback required"
 
 _SE_DOMAINS = {
     "stackoverflow.com": "stackoverflow",
@@ -75,7 +76,11 @@ def _html_to_text(html: str) -> str:
     return soup.get_text(separator="\n", strip=True)
 
 
-def fetch(url: str) -> FetchResult:
+def _browser_fallback_result(url: str, t0: float, reason: str) -> FetchResult:
+    return make_error_result(url, "stackexchange", t0, f"{_BROWSER_FALLBACK_REQUIRED}: {reason}")
+
+
+def fetch(url: str, *, allow_browser_fallback: bool = True) -> FetchResult:
     """Fetch a Stack Exchange question + answers via the API.
 
     Returns the question and its answers as markdown, sorted by score
@@ -111,7 +116,9 @@ def fetch(url: str) -> FetchResult:
             items = data.get("items", [])
             if not items:
                 logger.info("SE API returned no items for %s/%s", site, question_id)
-                return pw.fetch(url)
+                if allow_browser_fallback:
+                    return pw.fetch(url)
+                return _browser_fallback_result(url, t0, "Stack Exchange API returned no items")
 
             question = items[0]
             title = question.get("title", "")
@@ -152,4 +159,6 @@ def fetch(url: str) -> FetchResult:
             e,
         )
 
-    return pw.fetch(url)
+    if allow_browser_fallback:
+        return pw.fetch(url)
+    return _browser_fallback_result(url, t0, "Stack Exchange API failed")

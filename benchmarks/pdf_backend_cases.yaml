@@ -1,0 +1,98 @@
+# PDF backend comparison cases.
+#
+# Prefer stable remote PDFs or local fixture paths. Every case carries expected
+# facts and a failure class so extraction regressions are labeled consistently.
+
+cases:
+  - id: arxiv_lora
+    category: paper
+    source: "https://arxiv.org/pdf/2106.09685"
+    query: "what low-rank adaptation method is proposed"
+    expected_facts:
+      - id: lora_name
+        any_of: ["LoRA", "Low-Rank Adaptation"]
+      - id: trainable_parameters
+        any_of: ["trainable parameters", "low-rank", "rank"]
+    expected_tables: []
+    failure_class:
+      on_fetch_error: fetch
+      on_empty_output: extraction
+      on_missing_facts: extraction
+
+  # --- table-heavy cases added 2026-06-06 (S4) ---------------------------
+  # Representative results tables from papers a trawl user would read.
+  # expected_facts are ground-truth table-cell values; the queries target
+  # cells, so a backend that linearizes the table into header-less number
+  # rows would lose them. All three pass with pymupdf end-to-end through
+  # fetch_relevant (the adoption-relevant metric), so they document that
+  # representative PDF tables need no structured backend.
+  - id: transformer_bleu_table
+    category: paper-table
+    source: "https://arxiv.org/pdf/1706.03762"
+    query: "Transformer big model BLEU score on English-German and English-French"
+    expected_facts:
+      - id: ende_bleu
+        any_of: ["28.4"]
+      - id: enfr_bleu
+        any_of: ["41.8"]
+      - id: metric
+        any_of: ["BLEU", "EN-DE"]
+    expected_tables: []
+    failure_class:
+      on_fetch_error: fetch
+      on_empty_output: extraction
+      on_missing_facts: extraction
+
+  - id: lora_gpt3_results
+    category: paper-table
+    source: "https://arxiv.org/pdf/2106.09685"
+    query: "LoRA GPT-3 175B accuracy on WikiSQL and MNLI"
+    expected_facts:
+      - id: wikisql
+        any_of: ["WikiSQL"]
+      - id: mnli
+        any_of: ["MNLI"]
+    expected_tables: []
+    failure_class:
+      on_fetch_error: fetch
+      on_empty_output: extraction
+      on_missing_facts: extraction
+
+  - id: bert_glue_table
+    category: paper-table
+    source: "https://arxiv.org/pdf/1810.04805"
+    query: "BERT large GLUE benchmark MNLI and SST-2 scores"
+    expected_facts:
+      - id: mnli
+        any_of: ["MNLI"]
+      - id: sst
+        any_of: ["SST"]
+      - id: glue
+        any_of: ["GLUE"]
+    expected_tables: []
+    failure_class:
+      on_fetch_error: fetch
+      on_empty_output: extraction
+      on_missing_facts: extraction
+
+  # Pathological dense 18-language matrix. pymupdf strips the header row,
+  # leaving anonymous number rows — language cells are NOT retrievable.
+  # Kept as a documented hard case, NOT a pymupdf indictment: it is
+  # non-representative, the failure is confounded by query vocabulary
+  # (the table uses ISO codes "ko"/"ja", not "Korean"/"Japanese"), and any
+  # structured-backend win would land in the unused `tables` field unless
+  # table-aware chunking is built (separate, larger scope). See the S4
+  # outcome doc.
+  - id: bge_m3_miracl_matrix
+    category: paper-dense-table
+    source: "https://arxiv.org/pdf/2402.03216"
+    query: "BGE-M3 MIRACL nDCG@10 score for Korean and Japanese"
+    expected_facts:
+      - id: miracl
+        any_of: ["MIRACL"]
+    expected_tables: []
+    failure_class:
+      on_fetch_error: fetch
+      on_empty_output: extraction
+      on_missing_facts: extraction
+

@@ -156,8 +156,8 @@ def test_budget_empty_query_is_no_op(monkeypatch):
     assert state["doc_texts_seen"] == ["doc 0", "doc 1", "doc 2"]
 
 
-def test_retrieval_result_reports_n_chunks_embedded_on_http_error(monkeypatch):
-    """Error path still carries the prefiltered count for telemetry."""
+def test_retrieval_result_reports_bm25_fallback_on_http_error(monkeypatch):
+    """Embedding HTTP errors fall back over the prefiltered BM25 pool."""
     import httpx
 
     chunks = [_chunk(f"alpha {i}") for i in range(5)]
@@ -167,8 +167,11 @@ def test_retrieval_result_reports_n_chunks_embedded_on_http_error(monkeypatch):
 
     monkeypatch.setattr(retrieval, "_embed_batch", _raise)
     result = retrieval.retrieve("alpha", chunks, k=3, chunk_budget=2)
-    assert result.error is not None
-    assert result.n_chunks_embedded == 2
+    assert result.error is None
+    assert result.warning
+    assert result.retrieval_mode == "bm25_fallback"
+    assert result.n_chunks_embedded == 0
+    assert len(result.scored) == 2
 
 
 if __name__ == "__main__":

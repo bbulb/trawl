@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trawl"
-version = "0.4.4"
+version = "0.4.5"
 description = "Selective web content extraction — fetch a page and return only the chunks most relevant to a query. Exposed as a Python library and an MCP server."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -44,6 +44,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+readability = [
+    "readability-lxml>=0.8",
+]
+pdf-backends = [
+    "markitdown>=0.1.0",
+    "unstructured[pdf]>=0.16",
+    "docling>=2.0",
+]
+scrapling = [
+    "scrapling[fetchers]>=0.4.7,<0.5",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -51,6 +62,7 @@ dev = [
 
 [project.scripts]
 trawl-mcp = "trawl_mcp.server:_cli_entry"
+trawl-doctor = "trawl.diagnostics:_cli_entry"
 
 [project.urls]
 Homepage = "https://github.com/bbulb/trawl"
