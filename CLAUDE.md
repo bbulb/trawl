@@ -37,8 +37,9 @@ trawl directory. Humans should read `README.md` first, then
 - **Longform retrieval cost (default on, 2026-04-22)**: `TRAWL_CHUNK_BUDGET`
   default flipped from `0` to `100` after re-validating on curl.se
   manpage (275 KB / 760 chunks, p95 25149 ms → 3065 ms). Parity 15/15
-  + agent_patterns coding 23/24 (pre-existing unrelated `arxiv_pdf_lora`
-  fetcher fail) preserved. Opt out via `TRAWL_CHUNK_BUDGET=0`.
+  + agent_patterns coding 23/24 at that time preserved (the unrelated
+  `arxiv_pdf_lora` fetcher flake has since recovered — coding is 24/24
+  as of v0.4.5). Opt out via `TRAWL_CHUNK_BUDGET=0`.
 
 ### What a new session should do first
 
