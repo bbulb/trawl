@@ -12,22 +12,22 @@ trawl directory. Humans should read `README.md` first, then
 
 ## Current status
 
-- **Version**: 0.4.4 (2026-04-22). Unreleased on `develop` since:
-  `TRAWL_EMBED_CACHE_TTL` default flipped from `0` (disabled) to
-  `3600` (1 hour) (roadmap Spike B, 2026-05-19). Cold retrieval p95
-  within +4% of prior baseline; warm retrieval p95 **−96.2%** (1503
-  → 57 ms avg on the 6 reader-comparison URLs). Disk usage 9.4 MB
-  per URL set, capped at `TRAWL_EMBED_CACHE_MAX_MB=512`. Opt out via
-  `TRAWL_EMBED_CACHE_TTL=0`. Prior highlight (v0.4.4 itself):
-  `TRAWL_CHUNK_BUDGET` default flipped `0` → `100` (PR #46), closing
-  curl.se manpage regression (p95 25149 → 3065 ms). Full list in
-  `CHANGELOG.md`.
+- **Version**: 0.4.5 (2026-06-07). Highlights: indirect
+  prompt-injection defense default on (`TRAWL_INJECTION_SCAN`),
+  hybrid dense+BM25 retrieval default on (`TRAWL_HYBRID_RETRIEVAL`),
+  document embedding cache default on (`TRAWL_EMBED_CACHE_TTL=3600`,
+  warm retrieval p95 −96.2%), Wikipedia heading-preservation fix,
+  `trawl-doctor` health check, BM25-only degraded fallback when the
+  embedding endpoint is down, MCP browser/general worker separation,
+  fetch-cache ETag/Last-Modified revalidation, opt-in contextual
+  retrieval + Scrapling fallback. Full list in `CHANGELOG.md`.
 - **Parity matrix**: 15/15 cases pass (see `tests/test_cases.yaml`).
   `kbo_schedule` pinned to a historical game day to survive KBO
-  off-days. `korean_wiki_person` + `hada_news` ground truth refreshed
-  on 2026-05-19 (PR #49) — synonym gap (added `무신`) and site
-  rebrand to GeekNews (replaced removed `points by`/`댓글` labels with
-  `GeekNews`/`topic?id`).
+  off-days. `wanted_jobs` asserts the structural marker `합격보상금`
+  only (PR #72) — live job-board titles rotate spelling hourly.
+- **Agent patterns**: 110 patterns across 8 shards; full run
+  101 PASS + 9 SKIP (`live: optional` anti-bot/DDG/VLM draws),
+  required FAIL 0. Coding shard 24/24.
 - **Profile eval**: 36-site evaluation — 92% success rate, 16/36 IDEAL
   selectors.
 - **Benchmark vs Jina Reader**: ~23x fewer tokens on average across 12
