@@ -16,7 +16,7 @@
 
 patterns:
   # ============================================================
-  # repeat_visits (3) — profile 자동 제안 + fast path
+  # repeat_visits (5) — profile 자동 제안 + fast path
   # ============================================================
 
   - id: openclaw_dashboard_warm_profile_naver_finance
@@ -105,6 +105,59 @@ patterns:
         ref: 0
         assertions:
           cache_hit: true        # C8: second visit within TTL hits cache
+      - op: fetch_page
+        ref: 0
+        assertions:
+          suggest_profile: true
+          cache_hit: true
+
+  # 2026-06-06 S5: 시나리오 다양화 — repeat_visits를 coding/금융/HN 밖의
+  # 도메인(뉴스 섹션 모니터링, 암호화폐 시세 폴링)으로 확장. 두 패턴 모두
+  # claude_code_repeated_pypi_check와 같은 3-visit 형태 (profile_page
+  # 없이 C8 cache_hit + visit-count 기반 suggest_profile만 검증).
+  # URL은 카탈로그 전체에서 고유해야 한다 (README stateful 규칙).
+
+  - id: hermes_bbc_tech_repeat_check
+    primary_agent: [hermes]
+    category: repeat_visits
+    description: "BBC 테크 섹션을 한 세션에서 3회 재확인 — 뉴스 모니터링 루프"
+    live: required
+    steps:
+      - op: fetch_page
+        # news.yaml은 /news/world를 사용 — 이 시나리오는 tech 섹션
+        # (2024 개편 후 canonical path는 /innovation)으로 cold start 보장.
+        url: "https://www.bbc.com/innovation"
+        query: "latest technology news"
+        assertions:
+          suggest_profile: false
+          error_is_none: true
+      - op: fetch_page
+        ref: 0
+        assertions:
+          cache_hit: true        # C8: same URL within TTL
+      - op: fetch_page
+        ref: 0
+        assertions:
+          suggest_profile: true  # visit 3 == VISIT_HINT_THRESHOLD
+          cache_hit: true
+
+  - id: openclaw_coingecko_eth_repeat_check
+    primary_agent: [openclaw, hermes]
+    category: repeat_visits
+    description: "CoinGecko ETH 시세를 한 세션에서 3회 재확인 — 시세 폴링 루프"
+    live: required
+    steps:
+      - op: fetch_page
+        # finance.yaml은 /coins/bitcoin을 사용 — ethereum으로 cold start.
+        url: "https://www.coingecko.com/en/coins/ethereum"
+        query: "Ethereum price and 24h change"
+        assertions:
+          suggest_profile: false
+          error_is_none: true
+      - op: fetch_page
+        ref: 0
+        assertions:
+          cache_hit: true
       - op: fetch_page
         ref: 0
         assertions:

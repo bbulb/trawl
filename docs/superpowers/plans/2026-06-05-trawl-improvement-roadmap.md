@@ -206,9 +206,26 @@ outcome note 작성 후 채택/기각. MinerU는 라이선스 원문 확인 선�
 backend의 answer hit 개선이 있어야 채택. 없으면 PyMuPDF 유지 결정을
 outcome note로 남기고 종결.
 
-### S5. 시나리오 다양화 (S1 완료 후) — `status: proposed`
+### S5. 시나리오 다양화 (S1 완료 후) — `status: done (2026-06-06, PR #80)`
 
-**작업.** coding 외 shard에 repeat_visits / error_handling / 
+**결론 (2026-06-06).** 카탈로그만으로 완료 (하네스 코드 무변경 — gate
+충족). 신규 패턴 6건: repeat_visits ×2 (BBC /innovation 뉴스 모니터링
+루프, CoinGecko ETH 시세 폴링 — multi-op은 README 관례대로
+workflows.yaml에 집결해 stateful URL 고유성 감사를 한 파일에 유지),
+error_handling ×2 (죽은 연합뉴스 기사 URL → news, 환각 ticker Yahoo
+lookup → finance), large_page ×2 (en World_War_II, ko 대한민국 CJK —
+기존 Korean_War와 동일한 n_chunks_max 12 / output_chars_max 8000
+budget). C16 assertion은 non-coding single_fetch 5건에 분산
+(excerpts_min_count ×3, chain_hints_has_key ×3, page_entities ×1 —
+coding 24/24 표면 무접촉). `outbound_links_contain_any`는 의도적
+미사용: live probe에서 drift-안정 표면 없음 (HN 링크는 스토리와 함께
+로테이션, GitHub은 top-k 의존 1건, wikipedia fetcher는 0건). en wiki
+page_entities는 빈 리스트로 관측(제목이 heading_paths에 안 들어감) →
+ko에서만 assert. Gate: 신규 6건 전부 live PASS (개별 + 공유상태 full
+run), full 110-pattern run **101 PASS + 9 SKIP** (S5 이전과 동일한
+live:optional skip 세트), exit 0.
+
+**(원래 작업, 참고용)** coding 외 shard에 repeat_visits / error_handling /
 large_page 패턴 각 1~2개씩 추가 (primary consumer 3종의 실제 워크플로
 기준). C16 enrichment assertion을 single_fetch 패턴 5개 이상에 분산.
 

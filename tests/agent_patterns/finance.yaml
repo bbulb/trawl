@@ -209,6 +209,9 @@ patterns:
       chunks_contain_any: ["CPI", "Consumer Price"]
       n_chunks_returned: ">= 3"
       error_is_none: true
+      # 2026-06-06 S5: C16 enrichment 신호 분산 — top-3 chunk 첫 문장 기반
+      # excerpts는 chunks >= 3이면 >= 1이 성립.
+      excerpts_min_count: ">= 1"
     budgets:
       total_ms_p95: 16000
 
@@ -225,3 +228,22 @@ patterns:
       error_is_none: true
     budgets:
       total_ms_p95: 22000
+
+  # ============================================================
+  # error_handling (1) — 2026-06-06 S5 시나리오 다양화
+  # ============================================================
+
+  - id: hermes_error_yahoo_invalid_ticker
+    primary_agent: [hermes]
+    category: error_handling
+    description: "존재하지 않는 ticker — Yahoo Finance lookup/404 응답에도 graceful"
+    # agent가 환각하거나 상장폐지된 ticker를 들고 오는 케이스. Yahoo는
+    # symbol-not-found 페이지를 주는데, 크래시 없이 chunks=[] 또는
+    # lookup 페이지 chunks가 돌아오면 통과.
+    url: "https://finance.yahoo.com/quote/ZZZXYZQ123/"
+    query: "stock price of this ticker"
+    live: required
+    assertions:
+      n_chunks_returned: ">= 0"
+    budgets:
+      total_ms_p95: 18000
