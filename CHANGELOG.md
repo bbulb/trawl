@@ -93,6 +93,14 @@ _No changes yet._
   suffix-less API/RSS paths like `news.ycombinator.com/rss` still
   route through raw passthrough (`fetcher_used: passthrough-probed`).
 
+- **Pluggable PDF extraction backends**
+  (`src/trawl/fetchers/pdf_backends.py`) — the PDF fetcher now routes
+  through a backend layer (`pymupdf` / `markitdown` / `unstructured` /
+  `docling` / `mineru`, heavy parsers behind lazy imports). The
+  production default is unchanged (PyMuPDF); the layer powers the R5
+  backend comparison harness, which concluded keep-PyMuPDF (see
+  Tests / research below).
+
 ### Fixed
 
 - **Wikipedia fetcher heading preservation** — modern MediaWiki HTML
