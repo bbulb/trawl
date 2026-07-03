@@ -30,6 +30,7 @@ services:
       # projector, so it doubles as the VLM — confirmed against /v1/models.
       TRAWL_VLM_URL: ${TRAWL_VLM_URL:-http://host.docker.internal:8080/v1}
       TRAWL_VLM_MODEL: ${TRAWL_VLM_MODEL:-gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf}
+      TRAWL_VLM_SLOT: ${TRAWL_VLM_SLOT:-3}
       # HyDE is off by default. The utility LLM moved off this Mac to `mind`
       # (2026-06-08) and is reachable via the socat relay at :18082, NOT :8082.
       # To enable HyDE, set in .env:
@@ -37,6 +38,7 @@ services:
       #   TRAWL_HYDE_MODEL=gemma-4-E4B-it-UD-Q4_K_XL.gguf
       TRAWL_HYDE_URL: ${TRAWL_HYDE_URL:-}
       TRAWL_HYDE_MODEL: ${TRAWL_HYDE_MODEL:-}
+      # TRAWL_HYDE_SLOT: ${TRAWL_HYDE_SLOT:-}
       TRAWL_TELEMETRY: ${TRAWL_TELEMETRY:-1}
       TRAWL_CHUNK_BUDGET: ${TRAWL_CHUNK_BUDGET:-100}
     volumes:
