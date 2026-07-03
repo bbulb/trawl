@@ -7,7 +7,12 @@ not yet follow semver strictly — expect breaking changes before
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+
+- Opt-in rs-trafilatura extraction candidate (`TRAWL_RS_TRAF=1`,
+  optional dependency) joins the extraction candidate max. WCXB
+  verification: rs markdown-variant F1 0.848 over-ok vs Trafilatura
+  baseline 0.750.
 
 ## [0.4.5] — 2026-06-07
 

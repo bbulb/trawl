@@ -20,17 +20,23 @@ the extra content lets pricing / list pages work.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass
 from math import log1p
+from types import ModuleType
 
 import trafilatura
 from bs4 import BeautifulSoup
 
 from . import records
 
+logger = logging.getLogger(__name__)
+
 _RECORDS_ENABLED = os.environ.get("TRAWL_RECORDS", "1") != "0"
+_RS_TRAF_MODULE: ModuleType | None = None
+_RS_TRAF_UNAVAILABLE = False
 
 _NOISE_TAGS = [
     "script",
@@ -147,6 +153,9 @@ def extract_html(html: str, *, query: str | None = None) -> ExtractedContent:
         _Candidate("beautifulsoup", _bs_fallback(html), "body", "/html/body"),
         _Candidate("readability", _readability(html), "readability", None),
     ]
+    if _rs_traf_enabled():
+        # List position only affects max() tie-breaking; append deliberately makes the newest candidate lose exact-score ties to established ones.
+        candidates.append(_Candidate("rs-trafilatura", _rs_trafilatura(html), "document", "/"))
     candidates = [c for c in candidates if c.markdown]
 
     if not candidates:
@@ -177,6 +186,45 @@ def _safe_trafilatura(html: str, **kwargs) -> str:
     try:
         return trafilatura.extract(html, **kwargs) or ""
     except Exception:
+        return ""
+
+
+def _rs_traf_enabled() -> bool:
+    return os.environ.get("TRAWL_RS_TRAF", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _load_rs_trafilatura() -> ModuleType | None:
+    global _RS_TRAF_MODULE, _RS_TRAF_UNAVAILABLE
+
+    if _RS_TRAF_UNAVAILABLE:
+        return None
+    if _RS_TRAF_MODULE is not None:
+        return _RS_TRAF_MODULE
+
+    try:
+        import rs_trafilatura
+    except Exception as e:
+        _RS_TRAF_UNAVAILABLE = True
+        logger.debug("rs_trafilatura unavailable; skipping extraction candidate: %s", e)
+        return None
+
+    _RS_TRAF_MODULE = rs_trafilatura
+    return rs_trafilatura
+
+
+def _rs_trafilatura(html: str) -> str:
+    try:
+        rs_trafilatura = _load_rs_trafilatura()
+        if rs_trafilatura is None:
+            return ""
+        res = rs_trafilatura.extract(html)
+        content_html = getattr(res, "content_html", None)
+        if not content_html:
+            return ""
+        markdown = rs_trafilatura.html_to_markdown(content_html)
+        return markdown if markdown and markdown.strip() else ""
+    except Exception as e:
+        logger.debug("rs_trafilatura extraction candidate failed: %s", e)
         return ""
 
 

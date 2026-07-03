@@ -26,6 +26,7 @@ benchmarks/results/
 
 # WCXB benchmark data (downloaded, not redistributed)
 benchmarks/wcxb/data/
+benchmarks/wcxb/results/
 
 # git worktrees
 .worktrees/
