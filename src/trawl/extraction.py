@@ -190,7 +190,7 @@ def _safe_trafilatura(html: str, **kwargs) -> str:
 
 
 def _rs_traf_enabled() -> bool:
-    return os.environ.get("TRAWL_RS_TRAF", "").strip().lower() in {"1", "true", "yes", "on"}
+    return os.environ.get("TRAWL_RS_TRAF", "1") != "0"
 
 
 def _load_rs_trafilatura() -> ModuleType | None:
