@@ -141,6 +141,7 @@ def _call_fetch_relevant_sync(
     use_rerank: bool,
     allow_browser: bool,
     record_telemetry: bool,
+    max_cache_age_s: int | None = None,
 ):
     kwargs = {
         "k": k,
@@ -151,6 +152,8 @@ def _call_fetch_relevant_sync(
         kwargs["allow_browser"] = allow_browser
     if _supports_keyword(fetch_relevant, "record_telemetry"):
         kwargs["record_telemetry"] = record_telemetry
+    if _supports_keyword(fetch_relevant, "max_cache_age_s"):
+        kwargs["max_cache_age_s"] = max_cache_age_s
     return fetch_relevant(url, query, **kwargs)
 
 
@@ -163,6 +166,7 @@ async def _run_fetch_page_pipeline(
     use_rerank: bool,
     allow_browser: bool,
     record_telemetry: bool,
+    max_cache_age_s: int | None,
     executor: ThreadPoolExecutor,
 ):
     loop = asyncio.get_running_loop()
@@ -177,6 +181,7 @@ async def _run_fetch_page_pipeline(
             use_rerank=use_rerank,
             allow_browser=allow_browser,
             record_telemetry=record_telemetry,
+            max_cache_age_s=max_cache_age_s,
         ),
     )
 
@@ -215,6 +220,7 @@ async def _run_fetch_page_routed(
     use_hyde: bool,
     use_rerank: bool,
     record_telemetry: bool,
+    max_cache_age_s: int | None,
 ):
     if _browser_free_fetch_page_route(url):
         result = await _run_fetch_page_pipeline(
@@ -225,6 +231,7 @@ async def _run_fetch_page_routed(
             use_rerank=use_rerank,
             allow_browser=False,
             record_telemetry=False,
+            max_cache_age_s=max_cache_age_s,
             executor=_general_executor,
         )
         if _result_requires_browser_retry(result):
@@ -236,6 +243,7 @@ async def _run_fetch_page_routed(
                 use_rerank=use_rerank,
                 allow_browser=True,
                 record_telemetry=record_telemetry,
+                max_cache_age_s=max_cache_age_s,
                 executor=_browser_executor,
             )
         if record_telemetry:
@@ -250,6 +258,7 @@ async def _run_fetch_page_routed(
         use_rerank=use_rerank,
         allow_browser=True,
         record_telemetry=record_telemetry,
+        max_cache_age_s=max_cache_age_s,
         executor=_browser_executor,
     )
 
@@ -332,6 +341,12 @@ async def list_tools() -> list[Tool]:
                         "(on by default). Improves precision "
                         "at ~0.5-2s extra latency.",
                     },
+                    "max_cache_age_s": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Override fetch-cache freshness in seconds; "
+                        "0 revalidates, omitted follows the env TTL.",
+                    },
                     "auto_profile": {
                         "type": "boolean",
                         "default": False,
@@ -405,6 +420,7 @@ async def _call_fetch_page(arguments: dict) -> list[TextContent]:
     use_hyde = bool(arguments.get("use_hyde", False))
     use_rerank = bool(arguments.get("use_rerank", True))
     auto_profile = bool(arguments.get("auto_profile", False))
+    max_cache_age_s = arguments.get("max_cache_age_s")
     if not url:
         return _error_response("url is required")
 
@@ -425,6 +441,7 @@ async def _call_fetch_page(arguments: dict) -> list[TextContent]:
         use_hyde=use_hyde,
         use_rerank=use_rerank,
         record_telemetry=not auto_profile_queryless,
+        max_cache_age_s=max_cache_age_s,
     )
 
     auto_profile_payload: dict = {}
@@ -456,6 +473,7 @@ async def _call_fetch_page(arguments: dict) -> list[TextContent]:
                     use_hyde=use_hyde,
                     use_rerank=use_rerank,
                     record_telemetry=True,
+                    max_cache_age_s=max_cache_age_s,
                 )
             else:
                 auto_profile_payload["profile_error"] = _truncate_text(profile_payload.get("error"))

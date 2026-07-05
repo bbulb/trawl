@@ -781,11 +781,19 @@ def fetch_relevant(
     use_rerank: bool = True,
     allow_browser: bool = True,
     record_telemetry: bool = True,
+    max_cache_age_s: int | None = None,
 ) -> PipelineResult:
     """Public entry point. See _fetch_relevant_impl for logic.
 
     Records one telemetry event per call when TRAWL_TELEMETRY=1.
     Telemetry failures never propagate.
+
+    max_cache_age_s controls fetch-cache freshness for the full pipeline:
+    None follows TRAWL_FETCH_CACHE_TTL; 0 treats any cached entry as stale
+    and routes through existing conditional-GET revalidation (which may still
+    304-reuse identical content); N accepts entries younger than N seconds.
+    Profile fast/transfer paths and passthrough/PDF branches do not consult
+    the fetch cache, so this parameter has no effect there.
     """
     result = _fetch_relevant_impl(
         url,
@@ -794,6 +802,7 @@ def fetch_relevant(
         use_hyde=use_hyde,
         use_rerank=use_rerank,
         allow_browser=allow_browser,
+        max_cache_age_s=max_cache_age_s,
     )
     if record_telemetry:
         telemetry.record(result)
@@ -808,6 +817,7 @@ def _fetch_relevant_impl(
     use_hyde: bool = False,
     use_rerank: bool = True,
     allow_browser: bool = True,
+    max_cache_age_s: int | None = None,
 ) -> PipelineResult:
     """Fetch `url`, return the main content.
 
@@ -906,6 +916,7 @@ def _fetch_relevant_impl(
         use_rerank=use_rerank,
         t_start=t_start,
         allow_browser=allow_browser,
+        max_cache_age_s=max_cache_age_s,
     )
 
     # Populate lazy suggest_profile hint on the fallback path.
@@ -1079,6 +1090,7 @@ def _run_full_pipeline(
     use_rerank: bool,
     t_start: float,
     allow_browser: bool = True,
+    max_cache_age_s: int | None = None,
 ) -> PipelineResult:
     """Non-profile pipeline: fetch → extract → chunk → (HyDE) → retrieve → rerank."""
     # 1. Fetch → markdown (or short-circuit for PDF / passthrough).
@@ -1086,7 +1098,7 @@ def _run_full_pipeline(
     # markdown + page_title so Playwright/Trafilatura are skipped;
     # chunking / embedding / retrieval still run fresh because they're
     # query-dependent.
-    cached, cache_stale = fetch_cache.get_with_state(url)
+    cached, cache_stale = fetch_cache.get_with_state(url, max_age_s=max_cache_age_s)
     revalidation_ms = 0
     if cached is not None and cache_stale:
         revalidated = fetch_cache.revalidate(cached)
