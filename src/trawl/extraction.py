@@ -24,7 +24,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from math import log1p
+from math import log1p, sqrt
 from types import ModuleType
 
 import trafilatura
@@ -258,7 +258,8 @@ def _score_candidate(markdown: str, *, query: str | None = None) -> float:
 
     query_score = _query_coverage(text, query) * 120.0
     length_score = min(log1p(len(text)) * 8.0, 70.0)
-    heading_score = min(len(_MD_HEADING_RE.findall(text)) / n_lines, 0.25) * 60.0
+    # sqrt dampens the all-or-nothing heading-density cliff (2026-07-06 oracle-gap diagnostic; V1 offline: +0.005 full-set F1, zero page-type regressions).
+    heading_score = min(sqrt(len(_MD_HEADING_RE.findall(text)) / n_lines), 0.35) * 40.0
     code_score = min(text.count("`") + len(_MD_CODE_FENCE_RE.findall(text)) * 6, 24) * 1.5
     table_score = min(len(_MD_TABLE_LINE_RE.findall(text)), 12) * 2.0
 
