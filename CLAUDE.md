@@ -202,6 +202,20 @@ trawl directory. Humans should read `README.md` first, then
     with a companion measurement: each addition must fix a specific
     pattern and not regress the other 15. See
     `docs/superpowers/specs/2026-04-20-playwright-shadow-dom-design.md`.
+  - **rs-trafilatura extraction candidate** (default on since
+    2026-07-04, opt-out via `TRAWL_RS_TRAF=0`) — a Rust extractor
+    (PyO3 bindings, `pip install rs-trafilatura`, optional dependency:
+    silently skipped when missing) joins `extract_html()`'s score-based
+    candidate selection. Output route is
+    `html_to_markdown(extract(html).content_html)` to preserve
+    headings/tables for the chunker. Measured 2026-07-03 on the WCXB
+    dev split: combined F1 0.809 vs prior 0.777 (+0.032); rs variant
+    alone 0.848 over-ok vs same-session Trafilatura 2.0.0 baseline
+    0.750, winning all 7 page types. Parity 15/15 in both modes,
+    coding 24/24. NOTE for A/B measurements: the C8 fetch cache stores
+    post-extraction results — disable it (`TRAWL_FETCH_CACHE_TTL=0`)
+    when comparing extraction modes or the candidate never runs. See
+    PR #83 and `notes/rs-trafilatura-verification-outcome.md`.
   - **Reranker chunk-window cap** (default on) —
     `src/trawl/reranking.py` clamps outbound documents to
     `TRAWL_RERANK_MAX_DOCS` (default `30`), each individual document
