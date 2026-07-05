@@ -149,31 +149,38 @@ def content_hash(markdown: str) -> str:
 # ---------- Public API
 
 
-def get(url: str, *, now: float | None = None) -> CachedFetch | None:
+def get(
+    url: str, *, now: float | None = None, max_age_s: int | None = None
+) -> CachedFetch | None:
     """Return the cached record for ``url`` if fresh, else None.
 
-    Stale, malformed, or schema-mismatched records are deleted as a
-    side effect so the next caller doesn't repeat the check.
+    Globally stale, malformed, or schema-mismatched records are deleted
+    as a side effect so the next caller doesn't repeat the check. When
+    ``max_age_s`` is provided, stale records are treated as a per-call
+    miss and left intact.
     """
     if not is_enabled():
         return None
 
-    record, is_stale = _read(url, now=now)
+    record, is_stale = _read(url, now=now, max_age_s=max_age_s)
     if record is None:
         return None
     if is_stale:
-        _safe_unlink(_path_for(url))
+        if max_age_s is None:
+            _safe_unlink(_path_for(url))
         return None
     return record
 
 
-def get_with_state(url: str, *, now: float | None = None) -> tuple[CachedFetch | None, bool]:
+def get_with_state(
+    url: str, *, now: float | None = None, max_age_s: int | None = None
+) -> tuple[CachedFetch | None, bool]:
     """Return ``(record, is_stale)`` without deleting stale records.
 
     This is used by the pipeline to attempt HTTP revalidation before
     falling back to the existing stale-entry refetch behavior.
     """
-    return _read(url, now=now)
+    return _read(url, now=now, max_age_s=max_age_s)
 
 
 def revalidate(entry: CachedFetch, *, now: float | None = None) -> RevalidationResult:
@@ -242,7 +249,9 @@ def revalidate(entry: CachedFetch, *, now: float | None = None) -> RevalidationR
     )
 
 
-def _read(url: str, *, now: float | None = None) -> tuple[CachedFetch | None, bool]:
+def _read(
+    url: str, *, now: float | None = None, max_age_s: int | None = None
+) -> tuple[CachedFetch | None, bool]:
     if not is_enabled():
         return None, False
 
@@ -264,8 +273,8 @@ def _read(url: str, *, now: float | None = None) -> tuple[CachedFetch | None, bo
 
     now_ts = time.time() if now is None else now
     cached_at = float(raw.get("cached_at") or 0)
-    ttl = _ttl_seconds()
-    is_stale = cached_at + ttl < now_ts
+    ttl = _ttl_seconds() if max_age_s is None else max_age_s
+    is_stale = max_age_s == 0 or cached_at + ttl < now_ts
 
     try:
         return CachedFetch(

@@ -9,6 +9,11 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Added
 
+- Per-call cache freshness override `max_cache_age_s` on
+  `fetch_relevant()` and MCP `fetch_page` (`None` = env TTL,
+  `0` = revalidate, `N` = accept entries younger than `N` seconds;
+  profile fast-path unaffected).
+
 - Default-on rs-trafilatura extraction candidate (`TRAWL_RS_TRAF=0`
   to opt out; optional dependency, silently skipped when not installed)
   joins the extraction candidate max. WCXB
