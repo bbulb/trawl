@@ -15,6 +15,13 @@ not yet follow semver strictly — expect breaking changes before
   verification: rs markdown-variant F1 0.848 over-ok vs Trafilatura
   baseline 0.750.
 
+### Changed
+
+- Extraction candidate scoring smooths heading density via sqrt, closing
+  part of the selector oracle gap (WCXB combined F1 0.809 → 0.814
+  measured end-to-end, matching the offline variant-matrix prediction;
+  all 7 page types net-positive).
+
 ## [0.4.5] — 2026-06-07
 
 ### Added
