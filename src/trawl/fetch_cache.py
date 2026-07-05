@@ -154,8 +154,10 @@ def get(
 ) -> CachedFetch | None:
     """Return the cached record for ``url`` if fresh, else None.
 
-    Stale, malformed, or schema-mismatched records are deleted as a
-    side effect so the next caller doesn't repeat the check.
+    Globally stale, malformed, or schema-mismatched records are deleted
+    as a side effect so the next caller doesn't repeat the check. When
+    ``max_age_s`` is provided, stale records are treated as a per-call
+    miss and left intact.
     """
     if not is_enabled():
         return None
@@ -164,7 +166,8 @@ def get(
     if record is None:
         return None
     if is_stale:
-        _safe_unlink(_path_for(url))
+        if max_age_s is None:
+            _safe_unlink(_path_for(url))
         return None
     return record
 

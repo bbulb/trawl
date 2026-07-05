@@ -420,7 +420,13 @@ async def _call_fetch_page(arguments: dict) -> list[TextContent]:
     use_hyde = bool(arguments.get("use_hyde", False))
     use_rerank = bool(arguments.get("use_rerank", True))
     auto_profile = bool(arguments.get("auto_profile", False))
-    max_cache_age_s = arguments.get("max_cache_age_s")
+    raw = arguments.get("max_cache_age_s")
+    try:
+        max_cache_age_s = int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return _error_response("max_cache_age_s must be a non-negative integer")
+    if max_cache_age_s is not None and max_cache_age_s < 0:
+        return _error_response("max_cache_age_s must be a non-negative integer")
     if not url:
         return _error_response("url is required")
 

@@ -152,6 +152,14 @@ def test_stale_entry_is_deleted_on_get():
     assert not path.exists()
 
 
+def test_get_with_max_age_zero_returns_none_without_deleting():
+    entry = _entry(cached_at=1000.0)
+    fetch_cache.put(entry)
+
+    assert fetch_cache.get(entry.url, now=1000.0, max_age_s=0) is None
+    assert fetch_cache.get(entry.url, now=1000.0) is not None
+
+
 def test_get_with_explicit_now_controls_expiry():
     entry = _entry(cached_at=1000.0)
     fetch_cache.put(entry)
