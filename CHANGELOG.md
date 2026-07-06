@@ -22,6 +22,11 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Changed
 
+- records-sentinel candidate gate relaxed from a hard filter to a +30 score
+  bonus - sentinel-bearing candidates still win near-ties, but a badly-pruned
+  sentinel candidate can now lose to a clearly better extraction (offline
+  sweep: +0.004 WCXB F1, no page type regressing).
+
 - Extraction candidate scoring smooths heading density via sqrt, closing
   part of the selector oracle gap (WCXB combined F1 0.809 → 0.814
   measured end-to-end, matching the offline variant-matrix prediction;

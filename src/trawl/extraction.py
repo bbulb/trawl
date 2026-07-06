@@ -74,6 +74,9 @@ _MD_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
 _MD_TABLE_LINE_RE = re.compile(r"^\s*\|.*\|\s*$", re.MULTILINE)
 _MD_CODE_FENCE_RE = re.compile(r"```")
 
+# 2026-07-06 sweep + end-to-end calibration - measured non-sentinel-vs-sentinel score gap on the aladin_bestsellers record page is 15.84 (query-dependent), so 15 fails by 0.84 and 20 leaves only a 4-point margin against live content drift; 30 keeps a 14-point margin at nearly the same sweep gain (+0.0037 vs +0.0046 full-set F1).
+SENTINEL_BONUS = 30.0
+
 
 @dataclass(frozen=True)
 class ExtractedContent:
@@ -161,18 +164,15 @@ def extract_html(html: str, *, query: str | None = None) -> ExtractedContent:
     if not candidates:
         return ExtractedContent(markdown="", extractor="")
 
-    # When records were annotated, prefer a candidate that preserved the
-    # sentinels over a longer candidate that stripped them. Aladin is the
-    # canonical case: the book list sits inside a <form>, which
-    # ``_bs_fallback`` decomposes as a noise tag — the bs output is
-    # longer than the trafilatura recall output but contains none of the
-    # 50 book records.
-    if records_present:
-        sentinel_bearing = [c for c in candidates if records.SENTINEL_PREFIX in c.markdown]
-        if sentinel_bearing:
-            candidates = sentinel_bearing
-
-    best = max(candidates, key=lambda c: _score_candidate(c.markdown, query=query))
+    best = max(
+        candidates,
+        key=lambda c: _score_candidate(c.markdown, query=query)
+        + (
+            SENTINEL_BONUS
+            if records_present and records.SENTINEL_PREFIX in c.markdown
+            else 0.0
+        ),
+    )
     return ExtractedContent(
         markdown=best.markdown,
         extractor=best.name,
