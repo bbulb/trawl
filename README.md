@@ -58,8 +58,11 @@ public benchmark (CC-BY-4.0, 1,497 dev pages across 7 page types).
 
 | Extractor                         |   F1   |
 |-----------------------------------|--------|
-| trawl (`html_to_markdown`)        |  0.777 |
+| trawl (`html_to_markdown`)        |  0.818 |
 | Trafilatura (same environment)    |  0.750 |
+
+(0.818 as of v0.4.6 — rs-trafilatura candidate default-on plus
+selector-scoring fixes; v0.4.5 measured 0.777.)
 
 Per-page-type breakdown and error counts: see
 [`benchmarks/wcxb/README.md`](benchmarks/wcxb/README.md) and run the
@@ -324,6 +327,27 @@ asks a vision LLM to identify the main-content region, and caches the
 resulting CSS selector keyed by host. Subsequent `fetch_page` calls on
 the same host scope extraction to that region, which further reduces
 token output on structured pages (finance, news feeds, schedules).
+
+### As an HTTP service (Docker Compose)
+
+For HTTP-only clients (or to share one instance across several projects), run
+trawl as a standalone container. It owns its own `docker-compose.yml`:
+
+```bash
+docker compose up -d --build
+```
+
+This publishes the MCP HTTP endpoint on `127.0.0.1:8765` and mounts `~/.trawl`
+for the profile/visit cache. Clients connect to:
+
+- `http://127.0.0.1:8765/mcp` — from the host
+- `http://host.docker.internal:8765/mcp` — from another container (e.g. Mija)
+
+LLM endpoints default to llama-servers on the host (`host.docker.internal`).
+Override any of them per host with a `.env` file (auto-loaded by compose) —
+see [`.env.example`](.env.example). Note that HyDE is off by default; if you
+enable it, point `TRAWL_HYDE_URL` at wherever your utility LLM actually lives
+(it may not be on the same host as the embedding/rerank servers).
 
 ### Wiring into a client
 

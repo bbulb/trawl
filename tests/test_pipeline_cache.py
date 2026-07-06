@@ -148,6 +148,75 @@ def test_expired_entry_triggers_refetch(fake_fetcher, fake_retrieval, no_profile
     assert got.markdown.startswith("# Cached Page")
 
 
+def test_max_cache_age_zero_forces_refetch_when_global_ttl_fresh(
+    fake_fetcher, fake_retrieval, no_profile
+):
+    url = "https://example.com/max-age-zero"
+    fetch_cache.put(
+        fetch_cache.CachedFetch(
+            url=url,
+            markdown="# cached\n\ncached body",
+            page_title="cached",
+            fetcher_used="playwright+trafilatura",
+            content_type="text/html",
+            cached_at=time.time(),
+            fetch_elapsed_ms=1000,
+        )
+    )
+
+    r = pipeline.fetch_relevant(url, "q", max_cache_age_s=0)
+
+    assert r.cache_hit is False
+    assert len(fake_fetcher) == 1
+    got = fetch_cache.get(url)
+    assert got is not None
+    assert got.markdown.startswith("# Cached Page")
+
+
+def test_large_max_cache_age_accepts_entry_global_ttl_would_call_stale(
+    fake_fetcher, fake_retrieval, no_profile
+):
+    url = "https://example.com/max-age-large"
+    fetch_cache.put(
+        fetch_cache.CachedFetch(
+            url=url,
+            markdown="# cached\n\ncached body",
+            page_title="cached",
+            fetcher_used="playwright+trafilatura",
+            content_type="text/html",
+            cached_at=time.time() - 10_000,
+            fetch_elapsed_ms=1000,
+        )
+    )
+
+    r = pipeline.fetch_relevant(url, "q", max_cache_age_s=20_000)
+
+    assert r.cache_hit is True
+    assert r.page_title == "cached"
+    assert len(fake_fetcher) == 0
+
+
+def test_default_max_cache_age_none_uses_global_ttl(fake_fetcher, fake_retrieval, no_profile):
+    url = "https://example.com/max-age-default"
+    fetch_cache.put(
+        fetch_cache.CachedFetch(
+            url=url,
+            markdown="# cached\n\ncached body",
+            page_title="cached",
+            fetcher_used="playwright+trafilatura",
+            content_type="text/html",
+            cached_at=time.time(),
+            fetch_elapsed_ms=1000,
+        )
+    )
+
+    r = pipeline.fetch_relevant(url, "q")
+
+    assert r.cache_hit is True
+    assert r.page_title == "cached"
+    assert len(fake_fetcher) == 0
+
+
 def test_expired_entry_revalidated_304_reuses_cache(
     fake_fetcher, fake_retrieval, no_profile, monkeypatch
 ):

@@ -9,6 +9,38 @@ not yet follow semver strictly — expect breaking changes before
 
 _No changes yet._
 
+## [0.4.6] — 2026-07-06
+
+### Added
+
+- Profile mapper promotes a DIV-level LCA to the nearest enclosing
+  MAIN/ARTICLE when the size ratio is <= 8x, fixing pypi-class pages
+  where anchor depth outliers collapsed the selector to a single
+  description card.
+
+- Per-call cache freshness override `max_cache_age_s` on
+  `fetch_relevant()` and MCP `fetch_page` (`None` = env TTL,
+  `0` = revalidate, `N` = accept entries younger than `N` seconds;
+  profile fast-path unaffected).
+
+- Default-on rs-trafilatura extraction candidate (`TRAWL_RS_TRAF=0`
+  to opt out; optional dependency, silently skipped when not installed)
+  joins the extraction candidate max. WCXB
+  verification: rs markdown-variant F1 0.848 over-ok vs Trafilatura
+  baseline 0.750.
+
+### Changed
+
+- records-sentinel candidate gate relaxed from a hard filter to a +30 score
+  bonus - sentinel-bearing candidates still win near-ties, but a badly-pruned
+  sentinel candidate can now lose to a clearly better extraction (offline
+  sweep: +0.004 WCXB F1, no page type regressing).
+
+- Extraction candidate scoring smooths heading density via sqrt, closing
+  part of the selector oracle gap (WCXB combined F1 0.809 → 0.814
+  measured end-to-end, matching the offline variant-matrix prediction;
+  all 7 page types net-positive).
+
 ## [0.4.5] — 2026-06-07
 
 ### Added
@@ -92,6 +124,14 @@ _No changes yet._
   `HEAD` (405/403/501) are re-probed with a header-only GET, so
   suffix-less API/RSS paths like `news.ycombinator.com/rss` still
   route through raw passthrough (`fetcher_used: passthrough-probed`).
+
+- **Pluggable PDF extraction backends**
+  (`src/trawl/fetchers/pdf_backends.py`) — the PDF fetcher now routes
+  through a backend layer (`pymupdf` / `markitdown` / `unstructured` /
+  `docling` / `mineru`, heavy parsers behind lazy imports). The
+  production default is unchanged (PyMuPDF); the layer powers the R5
+  backend comparison harness, which concluded keep-PyMuPDF (see
+  Tests / research below).
 
 ### Fixed
 

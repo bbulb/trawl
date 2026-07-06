@@ -53,6 +53,12 @@ cases:
     query: "what is ownership in Rust"
     description: "Rust Book — minimal sidebar, prose-heavy with code blocks"
 
+  - id: pypi_project
+    category: docs
+    url: "https://pypi.org/project/requests/"
+    query: "how to install requests"
+    description: "PyPI project page — package metadata, install command, release details"
+
   # ===== WIKI =====
   - id: wiki_llm
     category: wiki

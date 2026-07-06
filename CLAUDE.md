@@ -12,15 +12,15 @@ trawl directory. Humans should read `README.md` first, then
 
 ## Current status
 
-- **Version**: 0.4.5 (2026-06-07). Highlights: indirect
-  prompt-injection defense default on (`TRAWL_INJECTION_SCAN`),
-  hybrid dense+BM25 retrieval default on (`TRAWL_HYBRID_RETRIEVAL`),
-  document embedding cache default on (`TRAWL_EMBED_CACHE_TTL=3600`,
-  warm retrieval p95 −96.2%), Wikipedia heading-preservation fix,
-  `trawl-doctor` health check, BM25-only degraded fallback when the
-  embedding endpoint is down, MCP browser/general worker separation,
-  fetch-cache ETag/Last-Modified revalidation, opt-in contextual
-  retrieval + Scrapling fallback. Full list in `CHANGELOG.md`.
+- **Version**: 0.4.6 (2026-07-06). Highlights: rs-trafilatura
+  extraction candidate default on (`TRAWL_RS_TRAF=0` to opt out;
+  optional dependency), extraction-selector fixes (heading-density
+  sqrt smoothing + records-sentinel hard gate → +30 score bonus;
+  WCXB combined F1 0.777 → 0.818), profile mapper DIV→MAIN/ARTICLE
+  LCA promotion (profile eval IDEAL 16/36 → 26/37), per-call cache
+  freshness `max_cache_age_s` on `fetch_relevant()`/MCP `fetch_page`.
+  0.4.5 highlights: injection defense, hybrid retrieval, embed cache
+  all default on. Full list in `CHANGELOG.md`.
 - **Parity matrix**: 15/15 cases pass (see `tests/test_cases.yaml`).
   `kbo_schedule` pinned to a historical game day to survive KBO
   off-days. `wanted_jobs` asserts the structural marker `합격보상금`
@@ -28,17 +28,21 @@ trawl directory. Humans should read `README.md` first, then
 - **Agent patterns**: 110 patterns across 8 shards; full run
   101 PASS + 9 SKIP (`live: optional` anti-bot/DDG/VLM draws),
   required FAIL 0. Coding shard 24/24.
-- **Profile eval**: 36-site evaluation — 92% success rate, 16/36 IDEAL
-  selectors.
+- **Profile eval**: 37-site evaluation — 92% success rate, 26/37 IDEAL
+  selectors (2026-07-06, post DIV→MAIN/ARTICLE promotion; the 3 fails
+  are live bot-block/error pages).
 - **Benchmark vs Jina Reader**: ~23x fewer tokens on average across 12
   cases; profile-cached mode ~30x.
-- **WCXB external benchmark**: trawl `html_to_markdown` F1 = 0.777 vs
-  Trafilatura baseline 0.750 on the 1,497-page dev split.
+- **WCXB external benchmark**: trawl `html_to_markdown` F1 = 0.818 vs
+  Trafilatura baseline 0.750 on the 1,497-page dev split (0.777 at
+  v0.4.5; lifted by the rs-trafilatura candidate + selector fixes in
+  0.4.6).
 - **Longform retrieval cost (default on, 2026-04-22)**: `TRAWL_CHUNK_BUDGET`
   default flipped from `0` to `100` after re-validating on curl.se
   manpage (275 KB / 760 chunks, p95 25149 ms → 3065 ms). Parity 15/15
-  + agent_patterns coding 23/24 (pre-existing unrelated `arxiv_pdf_lora`
-  fetcher fail) preserved. Opt out via `TRAWL_CHUNK_BUDGET=0`.
+  + agent_patterns coding 23/24 at that time preserved (the unrelated
+  `arxiv_pdf_lora` fetcher flake has since recovered — coding is 24/24
+  as of v0.4.5). Opt out via `TRAWL_CHUNK_BUDGET=0`.
 
 ### What a new session should do first
 
@@ -201,6 +205,20 @@ trawl directory. Humans should read `README.md` first, then
     with a companion measurement: each addition must fix a specific
     pattern and not regress the other 15. See
     `docs/superpowers/specs/2026-04-20-playwright-shadow-dom-design.md`.
+  - **rs-trafilatura extraction candidate** (default on since
+    2026-07-04, opt-out via `TRAWL_RS_TRAF=0`) — a Rust extractor
+    (PyO3 bindings, `pip install rs-trafilatura`, optional dependency:
+    silently skipped when missing) joins `extract_html()`'s score-based
+    candidate selection. Output route is
+    `html_to_markdown(extract(html).content_html)` to preserve
+    headings/tables for the chunker. Measured 2026-07-03 on the WCXB
+    dev split: combined F1 0.809 vs prior 0.777 (+0.032); rs variant
+    alone 0.848 over-ok vs same-session Trafilatura 2.0.0 baseline
+    0.750, winning all 7 page types. Parity 15/15 in both modes,
+    coding 24/24. NOTE for A/B measurements: the C8 fetch cache stores
+    post-extraction results — disable it (`TRAWL_FETCH_CACHE_TTL=0`)
+    when comparing extraction modes or the candidate never runs. See
+    PR #83 and `notes/rs-trafilatura-verification-outcome.md`.
   - **Reranker chunk-window cap** (default on) —
     `src/trawl/reranking.py` clamps outbound documents to
     `TRAWL_RERANK_MAX_DOCS` (default `30`), each individual document

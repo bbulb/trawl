@@ -20,6 +20,10 @@ from playwright.sync_api import Page
 SEMANTIC_TAGS = {"ARTICLE", "MAIN", "SECTION", "TABLE", "UL", "OL"}
 DEFAULT_MIN_CHARS = 300
 DEFAULT_MAX_CANDIDATES_PER_ANCHOR = 5
+# pypi.org measured main/lca ratio is 6.0 (main 10,903 chars vs narrow LCA 1,818,
+# 2026-07-06); 8.0 admits it with margin while refusing runaway widening; only
+# fires on DIV LCAs so semantic-tag LCAs (TABLE/ARTICLE/SECTION/TBODY) are never touched.
+PROMOTION_MAX_RATIO = 8.0
 
 
 @dataclass
@@ -51,7 +55,7 @@ class MapResult:
 # returns the mapping data so we don't have to make N round-trips.
 _ANCESTOR_LCA_JS = r"""
 (args) => {
-  const { anchors, minChars, maxCandidates, semanticTags } = args;
+  const { anchors, minChars, maxCandidates, semanticTags, promotionMaxRatio } = args;
 
   // Helper: normalize whitespace for substring search.
   const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
@@ -228,6 +232,24 @@ _ANCESTOR_LCA_JS = r"""
   if (!lcaEl) {
     return { ok: false, reason: "LCA computation returned null", missed, found: [] };
   }
+  const notes = [];
+  if (lcaEl.tagName === "DIV") {
+    const lcaChars = norm(lcaEl.innerText || "").length;
+    if (lcaChars > 0) {
+      let promotionTarget = lcaEl.parentElement;
+      while (promotionTarget && promotionTarget !== document.body) {
+        if (promotionTarget.tagName === "MAIN" || promotionTarget.tagName === "ARTICLE") {
+          const ratio = norm(promotionTarget.innerText || "").length / lcaChars;
+          if (ratio <= promotionMaxRatio) {
+            lcaEl = promotionTarget;
+            notes.push(`promoted DIV lca to ${promotionTarget.tagName} (ratio ${ratio.toFixed(1)})`);
+          }
+          break;
+        }
+        promotionTarget = promotionTarget.parentElement;
+      }
+    }
+  }
   const lcaTagPath = tagPath(lcaEl);
 
   // Generate a CSS selector for lcaEl.
@@ -305,6 +327,7 @@ _ANCESTOR_LCA_JS = r"""
     })),
     missed,
     outlierDrops,
+    notes,
   };
 };
 """
@@ -325,6 +348,7 @@ def find_main_subtree(
             "minChars": min_chars,
             "maxCandidates": max_candidates_per_anchor,
             "semanticTags": sorted(SEMANTIC_TAGS),
+            "promotionMaxRatio": PROMOTION_MAX_RATIO,
         },
     )
 
@@ -341,7 +365,7 @@ def find_main_subtree(
         )
 
     lca_tag = raw["lcaTag"]
-    notes: list[str] = []
+    notes: list[str] = list(raw.get("notes", []) or [])
     outlier_drops_raw = raw.get("outlierDrops", []) or []
     outlier_anchor_names = [od["anchor"] for od in outlier_drops_raw]
     for od in outlier_drops_raw:

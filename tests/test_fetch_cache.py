@@ -152,6 +152,14 @@ def test_stale_entry_is_deleted_on_get():
     assert not path.exists()
 
 
+def test_get_with_max_age_zero_returns_none_without_deleting():
+    entry = _entry(cached_at=1000.0)
+    fetch_cache.put(entry)
+
+    assert fetch_cache.get(entry.url, now=1000.0, max_age_s=0) is None
+    assert fetch_cache.get(entry.url, now=1000.0) is not None
+
+
 def test_get_with_explicit_now_controls_expiry():
     entry = _entry(cached_at=1000.0)
     fetch_cache.put(entry)
@@ -160,6 +168,41 @@ def test_get_with_explicit_now_controls_expiry():
     # 400s after cached_at is past the TTL.
     fetch_cache.put(entry)  # re-put since previous get may have deleted
     assert fetch_cache.get(entry.url, now=1400.0) is None
+
+
+def test_get_with_state_max_age_tighter_than_global_ttl_marks_stale():
+    entry = _entry(cached_at=1000.0)
+    fetch_cache.put(entry)
+
+    got, is_stale = fetch_cache.get_with_state(entry.url, now=1120.0, max_age_s=60)
+
+    assert got is not None
+    assert is_stale is True
+    assert fetch_cache._path_for(entry.url).exists()
+
+
+def test_get_with_state_max_age_zero_returns_stale_entry():
+    entry = _entry(cached_at=1000.0)
+    fetch_cache.put(entry)
+
+    got, is_stale = fetch_cache.get_with_state(entry.url, now=1000.0, max_age_s=0)
+
+    assert got is not None
+    assert is_stale is True
+
+
+def test_get_with_state_max_age_none_follows_global_ttl(monkeypatch):
+    monkeypatch.setenv("TRAWL_FETCH_CACHE_TTL", "60")
+    entry = _entry(cached_at=1000.0)
+    fetch_cache.put(entry)
+
+    got, is_stale = fetch_cache.get_with_state(entry.url, now=1050.0, max_age_s=None)
+    assert got is not None
+    assert is_stale is False
+
+    got, is_stale = fetch_cache.get_with_state(entry.url, now=1061.0, max_age_s=None)
+    assert got is not None
+    assert is_stale is True
 
 
 def test_get_with_state_returns_stale_entry_without_deleting():

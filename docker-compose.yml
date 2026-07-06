@@ -1,0 +1,50 @@
+# trawl — selective web extraction MCP server (standalone).
+#
+# trawl is meant to serve multiple MCP clients (Mija, Claude Code, …) from a
+# single running instance, so it owns its own compose file. Bring it up here:
+#
+#   docker compose up -d --build
+#
+# Clients connect to the published port on the host:
+#   - container clients (e.g. Mija):  http://host.docker.internal:8765/mcp
+#   - host clients:                   http://127.0.0.1:8765/mcp
+#
+# LLM endpoints default to llama-servers reachable on the host. Override any
+# of them per-host with a .env file (auto-loaded by compose). For example, if
+# the utility LLM is offloaded to another machine via a socat relay, set
+# TRAWL_HYDE_URL in .env — see .env.example for the full list.
+services:
+  trawl:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      TRAWL_EMBED_URL: ${TRAWL_EMBED_URL:-http://host.docker.internal:8081/v1}
+      TRAWL_EMBED_MODEL: ${TRAWL_EMBED_MODEL:-bge-m3-Q8_0.gguf}
+      TRAWL_RERANK_URL: ${TRAWL_RERANK_URL:-http://host.docker.internal:8083/v1}
+      TRAWL_RERANK_MODEL: ${TRAWL_RERANK_MODEL:-bge-reranker-v2-m3}
+      # VLM (profile_page). On this host the :8080 chat server carries an mmproj
+      # projector, so it doubles as the VLM — confirmed against /v1/models.
+      TRAWL_VLM_URL: ${TRAWL_VLM_URL:-http://host.docker.internal:8080/v1}
+      TRAWL_VLM_MODEL: ${TRAWL_VLM_MODEL:-gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf}
+      TRAWL_VLM_SLOT: ${TRAWL_VLM_SLOT:-3}
+      # HyDE is off by default. The utility LLM moved off this Mac to `mind`
+      # (2026-06-08) and is reachable via the socat relay at :18082, NOT :8082.
+      # To enable HyDE, set in .env:
+      #   TRAWL_HYDE_URL=http://host.docker.internal:18082/v1
+      #   TRAWL_HYDE_MODEL=gemma-4-E4B-it-UD-Q4_K_XL.gguf
+      TRAWL_HYDE_URL: ${TRAWL_HYDE_URL:-}
+      TRAWL_HYDE_MODEL: ${TRAWL_HYDE_MODEL:-}
+      # TRAWL_HYDE_SLOT: ${TRAWL_HYDE_SLOT:-}
+      TRAWL_TELEMETRY: ${TRAWL_TELEMETRY:-1}
+      TRAWL_CHUNK_BUDGET: ${TRAWL_CHUNK_BUDGET:-100}
+    volumes:
+      - ~/.trawl:/root/.cache/trawl
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"

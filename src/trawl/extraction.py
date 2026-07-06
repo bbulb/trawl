@@ -20,17 +20,23 @@ the extra content lets pricing / list pages work.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass
-from math import log1p
+from math import log1p, sqrt
+from types import ModuleType
 
 import trafilatura
 from bs4 import BeautifulSoup
 
 from . import records
 
+logger = logging.getLogger(__name__)
+
 _RECORDS_ENABLED = os.environ.get("TRAWL_RECORDS", "1") != "0"
+_RS_TRAF_MODULE: ModuleType | None = None
+_RS_TRAF_UNAVAILABLE = False
 
 _NOISE_TAGS = [
     "script",
@@ -67,6 +73,9 @@ _URL_RE = re.compile(r"https?://\S+")
 _MD_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
 _MD_TABLE_LINE_RE = re.compile(r"^\s*\|.*\|\s*$", re.MULTILINE)
 _MD_CODE_FENCE_RE = re.compile(r"```")
+
+# 2026-07-06 sweep + end-to-end calibration - measured non-sentinel-vs-sentinel score gap on the aladin_bestsellers record page is 15.84 (query-dependent), so 15 fails by 0.84 and 20 leaves only a 4-point margin against live content drift; 30 keeps a 14-point margin at nearly the same sweep gain (+0.0037 vs +0.0046 full-set F1).
+SENTINEL_BONUS = 30.0
 
 
 @dataclass(frozen=True)
@@ -147,23 +156,23 @@ def extract_html(html: str, *, query: str | None = None) -> ExtractedContent:
         _Candidate("beautifulsoup", _bs_fallback(html), "body", "/html/body"),
         _Candidate("readability", _readability(html), "readability", None),
     ]
+    if _rs_traf_enabled():
+        # List position only affects max() tie-breaking; append deliberately makes the newest candidate lose exact-score ties to established ones.
+        candidates.append(_Candidate("rs-trafilatura", _rs_trafilatura(html), "document", "/"))
     candidates = [c for c in candidates if c.markdown]
 
     if not candidates:
         return ExtractedContent(markdown="", extractor="")
 
-    # When records were annotated, prefer a candidate that preserved the
-    # sentinels over a longer candidate that stripped them. Aladin is the
-    # canonical case: the book list sits inside a <form>, which
-    # ``_bs_fallback`` decomposes as a noise tag — the bs output is
-    # longer than the trafilatura recall output but contains none of the
-    # 50 book records.
-    if records_present:
-        sentinel_bearing = [c for c in candidates if records.SENTINEL_PREFIX in c.markdown]
-        if sentinel_bearing:
-            candidates = sentinel_bearing
-
-    best = max(candidates, key=lambda c: _score_candidate(c.markdown, query=query))
+    best = max(
+        candidates,
+        key=lambda c: _score_candidate(c.markdown, query=query)
+        + (
+            SENTINEL_BONUS
+            if records_present and records.SENTINEL_PREFIX in c.markdown
+            else 0.0
+        ),
+    )
     return ExtractedContent(
         markdown=best.markdown,
         extractor=best.name,
@@ -177,6 +186,45 @@ def _safe_trafilatura(html: str, **kwargs) -> str:
     try:
         return trafilatura.extract(html, **kwargs) or ""
     except Exception:
+        return ""
+
+
+def _rs_traf_enabled() -> bool:
+    return os.environ.get("TRAWL_RS_TRAF", "1") != "0"
+
+
+def _load_rs_trafilatura() -> ModuleType | None:
+    global _RS_TRAF_MODULE, _RS_TRAF_UNAVAILABLE
+
+    if _RS_TRAF_UNAVAILABLE:
+        return None
+    if _RS_TRAF_MODULE is not None:
+        return _RS_TRAF_MODULE
+
+    try:
+        import rs_trafilatura
+    except Exception as e:
+        _RS_TRAF_UNAVAILABLE = True
+        logger.debug("rs_trafilatura unavailable; skipping extraction candidate: %s", e)
+        return None
+
+    _RS_TRAF_MODULE = rs_trafilatura
+    return rs_trafilatura
+
+
+def _rs_trafilatura(html: str) -> str:
+    try:
+        rs_trafilatura = _load_rs_trafilatura()
+        if rs_trafilatura is None:
+            return ""
+        res = rs_trafilatura.extract(html)
+        content_html = getattr(res, "content_html", None)
+        if not content_html:
+            return ""
+        markdown = rs_trafilatura.html_to_markdown(content_html)
+        return markdown if markdown and markdown.strip() else ""
+    except Exception as e:
+        logger.debug("rs_trafilatura extraction candidate failed: %s", e)
         return ""
 
 
@@ -210,7 +258,8 @@ def _score_candidate(markdown: str, *, query: str | None = None) -> float:
 
     query_score = _query_coverage(text, query) * 120.0
     length_score = min(log1p(len(text)) * 8.0, 70.0)
-    heading_score = min(len(_MD_HEADING_RE.findall(text)) / n_lines, 0.25) * 60.0
+    # sqrt dampens the all-or-nothing heading-density cliff (2026-07-06 oracle-gap diagnostic; V1 offline: +0.005 full-set F1, zero page-type regressions).
+    heading_score = min(sqrt(len(_MD_HEADING_RE.findall(text)) / n_lines), 0.35) * 40.0
     code_score = min(text.count("`") + len(_MD_CODE_FENCE_RE.findall(text)) * 6, 24) * 1.5
     table_score = min(len(_MD_TABLE_LINE_RE.findall(text)), 12) * 2.0
 
