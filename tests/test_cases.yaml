@@ -207,13 +207,14 @@ cases:
     query: "최근 IT 뉴스"
     ground_truth:
       must_contain_any:
-        # 2026-05-19: site rebranded to "GeekNews" and dropped the
-        # "points by username" / "댓글" labels on the home page (vote
-        # counts now render as bare numbers, comment counts moved to
-        # topic detail pages). Replaced with stable markers: site
-        # name + the topic link pattern that anchors every news card.
-        - "GeekNews"
-        - "topic?id"
+        # 2026-07-06: front-page drift again - the GeekNews brand text no longer appears
+        # in the extracted body and topic?id hrefs are not rendered as text. Replaced with
+        # per-card structural tokens (vote arrow / points-by / comment label), following
+        # the wanted_jobs precedent (PR #72). The 2026-05-19 note said points-by/댓글
+        # labels had been dropped; they are back as of today.
+        - "▲"
+        - "points by"
+        - "댓글"
       min_chunks_returned: 5
 
   - id: aladin_bestsellers
