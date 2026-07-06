@@ -58,8 +58,11 @@ public benchmark (CC-BY-4.0, 1,497 dev pages across 7 page types).
 
 | Extractor                         |   F1   |
 |-----------------------------------|--------|
-| trawl (`html_to_markdown`)        |  0.777 |
+| trawl (`html_to_markdown`)        |  0.818 |
 | Trafilatura (same environment)    |  0.750 |
+
+(0.818 as of v0.4.6 — rs-trafilatura candidate default-on plus
+selector-scoring fixes; v0.4.5 measured 0.777.)
 
 Per-page-type breakdown and error counts: see
 [`benchmarks/wcxb/README.md`](benchmarks/wcxb/README.md) and run the

@@ -7,6 +7,10 @@ not yet follow semver strictly — expect breaking changes before
 
 ## [Unreleased]
 
+_No changes yet._
+
+## [0.4.6] — 2026-07-06
+
 ### Added
 
 - Profile mapper promotes a DIV-level LCA to the nearest enclosing

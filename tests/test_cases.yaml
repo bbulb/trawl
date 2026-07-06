@@ -212,9 +212,16 @@ cases:
         # per-card structural tokens (vote arrow / points-by / comment label), following
         # the wanted_jobs precedent (PR #72). The 2026-05-19 note said points-by/댓글
         # labels had been dropped; they are back as of today.
+        # 2026-07-06 addendum: extraction candidate near-tie on this page flips with
+        # daily front-page rotation - trafilatura-recall (keeps titles+links, drops
+        # card metadata) vs beautifulsoup/rs (keep card metadata). The markdown-link
+        # token is present in ALL candidates' output, so the any-group is satisfied
+        # regardless of which candidate wins; card-metadata markers kept first as the
+        # stronger signal.
         - "▲"
         - "points by"
         - "댓글"
+        - "](http"
       min_chunks_returned: 5
 
   - id: aladin_bestsellers

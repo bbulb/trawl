@@ -23,4 +23,4 @@ list of supported page types.
 from .pipeline import PipelineResult, fetch_relevant, to_dict
 
 __all__ = ["fetch_relevant", "PipelineResult", "to_dict"]
-__version__ = "0.4.5"
+__version__ = "0.4.6"
