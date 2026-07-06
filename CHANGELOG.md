@@ -9,6 +9,14 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Added
 
+- AUTO profile generation now applies a quality accept-gate: the auto
+  path refuses to keep profiles classified worse than acceptable, while
+  explicit `profile_page` behavior is unchanged.
+
+- Profile-path quality signals `profile_top_score` and
+  `profile_query_coverage` are recorded in results and telemetry
+  (schema bump), groundwork for the Stage-2 feedback re-profile loop.
+
 - MCP fetch_page auto_profile now also triggers on suggest_profile for
   with-query fetches, with env default TRAWL_MCP_AUTO_PROFILE and
   process-lifetime guardrails (failed-host cooldown,

@@ -70,6 +70,8 @@ def test_full_pipeline_passes_context_texts_when_enabled(monkeypatch, tmp_path):
     assert result.contextual_retrieval_used is True
     assert result.context_prefix_chars_total > 0
     assert result.context_prefix_chars_avg > 0
+    assert result.profile_top_score is None
+    assert result.profile_query_coverage is None
 
 
 def test_full_pipeline_omits_context_texts_when_disabled(monkeypatch, tmp_path):
@@ -122,6 +124,8 @@ def test_full_pipeline_omits_context_texts_when_disabled(monkeypatch, tmp_path):
     assert result.contextual_retrieval_used is False
     assert result.context_prefix_chars_total == 0
     assert result.context_prefix_chars_avg == 0.0
+    assert result.profile_top_score is None
+    assert result.profile_query_coverage is None
 
 
 def test_profile_retrieval_passes_context_texts_when_enabled(monkeypatch, make_profile):
@@ -175,6 +179,8 @@ def test_profile_retrieval_passes_context_texts_when_enabled(monkeypatch, make_p
     assert result.contextual_retrieval_used is True
     assert result.context_prefix_chars_total > 0
     assert result.context_prefix_chars_avg > 0
+    assert result.profile_top_score == 1.0
+    assert result.profile_query_coverage == 1.0
 
 
 def test_pipeline_result_defaults_contextual_fields():
@@ -197,3 +203,5 @@ def test_pipeline_result_defaults_contextual_fields():
     assert result.contextual_retrieval_used is False
     assert result.context_prefix_chars_total == 0
     assert result.context_prefix_chars_avg == 0.0
+    assert result.profile_top_score is None
+    assert result.profile_query_coverage is None
