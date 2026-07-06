@@ -7,7 +7,13 @@ not yet follow semver strictly — expect breaking changes before
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+
+- MCP fetch_page auto_profile now also triggers on suggest_profile for
+  with-query fetches, with env default TRAWL_MCP_AUTO_PROFILE and
+  process-lifetime guardrails (failed-host cooldown,
+  TRAWL_MCP_AUTO_PROFILE_MAX cap); closes the ignored-hint gap observed
+  in telemetry (57 flagged calls, 0 profile_page).
 
 ## [0.4.6] — 2026-07-06
 
