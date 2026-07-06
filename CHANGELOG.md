@@ -9,6 +9,11 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Added
 
+- Profile mapper promotes a DIV-level LCA to the nearest enclosing
+  MAIN/ARTICLE when the size ratio is <= 8x, fixing pypi-class pages
+  where anchor depth outliers collapsed the selector to a single
+  description card.
+
 - Per-call cache freshness override `max_cache_age_s` on
   `fetch_relevant()` and MCP `fetch_page` (`None` = env TTL,
   `0` = revalidate, `N` = accept entries younger than `N` seconds;
