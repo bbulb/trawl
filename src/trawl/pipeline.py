@@ -22,6 +22,7 @@ from inspect import Parameter, signature
 from urllib.parse import urlsplit
 
 from . import (
+    bm25,
     chunking,
     contextual,
     enrichment,
@@ -117,6 +118,8 @@ class PipelineResult:
     # existing callers that construct PipelineResult by hand keep working.
     profile_used: bool = False
     profile_hash: str | None = None
+    profile_top_score: float | None = None
+    profile_query_coverage: float | None = None
     path: str = "full_page_retrieval"
     suggest_profile: bool = False
     suggest_profile_reason: str | None = None
@@ -230,6 +233,22 @@ def _chunk_to_dict(chunk, *, score: float | None, title: str = "") -> dict:
     if getattr(chunk, "char_span", None) is not None:
         payload["char_span"] = list(chunk.char_span)
     return payload
+
+
+def _profile_top_score(chunk_dicts: list[dict]) -> float | None:
+    if not chunk_dicts:
+        return None
+    score = chunk_dicts[0].get("score")
+    return float(score) if isinstance(score, (int, float)) else None
+
+
+def _profile_query_coverage(query: str | None, chunk_dicts: list[dict]) -> float | None:
+    query_tokens = bm25.tokenize(query or "")
+    if not query_tokens:
+        return None
+    chunk_text = "\n".join(str(c.get("text") or "") for c in chunk_dicts)
+    chunk_tokens = set(bm25.tokenize(chunk_text))
+    return sum(1 for token in query_tokens if token in chunk_tokens) / len(query_tokens)
 
 
 def _scan_injection(chunk_dicts: list[dict], *, html: str | None) -> list[str]:
@@ -526,6 +545,8 @@ def _build_profile_result(
                 error=retrieved.error,
                 warnings=[retrieval_warning] if retrieval_warning else [],
                 path=path,
+                profile_top_score=None,
+                profile_query_coverage=_profile_query_coverage(query, []),
                 n_chunks_embedded=retrieved.n_chunks_embedded,
                 embed_cache_hits=retrieved.embed_cache_hits,
                 embed_cache_misses=retrieved.embed_cache_misses,
@@ -560,6 +581,8 @@ def _build_profile_result(
 
     scan_warnings = _scan_injection(retrieved_dicts, html=subtree_html)
     profile_warnings = ([retrieval_warning] if retrieval_warning else []) + scan_warnings
+    profile_top_score = _profile_top_score(retrieved_dicts)
+    profile_query_coverage = _profile_query_coverage(query, retrieved_dicts)
 
     return PipelineResult(
         **base_kwargs,
@@ -568,6 +591,8 @@ def _build_profile_result(
         chunks=retrieved_dicts,
         warnings=profile_warnings,
         path=path,
+        profile_top_score=profile_top_score,
+        profile_query_coverage=profile_query_coverage,
         rerank_used=use_rerank and path == "profile_retrieval",
         rerank_ms=rerank_ms,
         rerank_capped=rerank_capped,

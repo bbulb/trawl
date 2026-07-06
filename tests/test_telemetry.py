@@ -50,7 +50,7 @@ def test_build_event_fields():
     r = _sample_result(url="https://www.example.com/a/b?x=1", query="hello")
     event = telemetry._build_event(r)
 
-    assert event["schema"] == 1
+    assert event["schema"] == 2
     assert event["host"] == "www.example.com"
     assert event["url"] == "https://www.example.com/a/b?x=1"
     # sha1("hello") = aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d → first 16
@@ -59,6 +59,8 @@ def test_build_event_fields():
     assert event["path"] == "full_page_retrieval"
     assert event["profile_used"] is False
     assert event["profile_hash"] is None
+    assert event["profile_top_score"] is None
+    assert event["profile_query_coverage"] is None
     assert event["rerank_used"] is False
     assert event["rerank_capped"] is False
     assert event["hyde_used"] is False
@@ -156,7 +158,7 @@ def test_record_appends_jsonl(tmp_path: Path, monkeypatch):
     assert len(lines) == 3
     for line in lines:
         event = json.loads(line)
-        assert event["schema"] == 1
+        assert event["schema"] == 2
         assert event["host"].endswith("example.com")
 
 

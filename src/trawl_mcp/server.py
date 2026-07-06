@@ -318,6 +318,42 @@ def _profile_generation_succeeded(payload: dict) -> bool:
     return bool(payload.get("ok") and payload.get("main_selector"))
 
 
+def _auto_profile_quality_signal(payload: dict, url: str) -> tuple[str, int]:
+    tag = payload.get("lca_tag")
+    path = payload.get("lca_path")
+    if not isinstance(path, list):
+        try:
+            from trawl.profiles import load_profile
+
+            profile = load_profile(url)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("auto_profile quality load failed for %s: %s", url, e)
+            profile = None
+        if profile is not None:
+            tag = tag or profile.mapper.lca_tag
+            path = profile.mapper.lca_path
+    tag_text = str(tag or "UNKNOWN").upper()
+    depth = len(path) if isinstance(path, list) else 0
+    return tag_text, depth
+
+
+def _auto_profile_quality_acceptable(tag: str, depth: int) -> bool:
+    ideal = tag in ("ARTICLE", "MAIN") or (depth >= 4 and tag not in ("BODY", "HTML", "DIV"))
+    acceptable = depth >= 3
+    return ideal or acceptable
+
+
+def _delete_auto_profile(url: str) -> None:
+    try:
+        from trawl.profiles import profile_path_for
+
+        path = profile_path_for(url)
+        if path.exists():
+            path.unlink()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("auto_profile delete failed for %s: %s", url, e)
+
+
 def _truncate_text(value, *, max_chars: int = 1000):
     if not isinstance(value, str) or len(value) <= max_chars:
         return value
@@ -375,6 +411,14 @@ async def _auto_profile_generate_and_retry(
     auto_profile_payload["profile_attempted"] = True
     auto_profile_payload["profile_page"] = _profile_page_payload_for_fetch(profile_payload)
     if _profile_generation_succeeded(profile_payload):
+        lca_tag, depth = _auto_profile_quality_signal(profile_payload, url)
+        if not _auto_profile_quality_acceptable(lca_tag, depth):
+            _delete_auto_profile(url)
+            _auto_profile_failed_hosts.add(_auto_profile_host(url))
+            auto_profile_payload["auto_profile_rejected"] = f"quality:{lca_tag}/{depth}"
+            if not initial_recorded:
+                trawl_telemetry.record(result)
+            return result
         return await _run_fetch_page_routed(
             url,
             query,

@@ -128,6 +128,8 @@ async def test_fetch_page_auto_profiles_missing_profile_and_retries(monkeypatch)
             "url_hash": "abc123def456",
             "cached": False,
             "main_selector": "main.content",
+            "lca_tag": "MAIN",
+            "lca_path": ["HTML", "BODY", "MAIN"],
         }
 
     monkeypatch.setattr(mcp_server, "fetch_relevant", fake_fetch_relevant)
@@ -187,6 +189,8 @@ async def test_fetch_page_auto_profiles_suggest_profile_and_retries(monkeypatch)
             "url_hash": "abc123def456",
             "cached": False,
             "main_selector": "main.content",
+            "lca_tag": "MAIN",
+            "lca_path": ["HTML", "BODY", "MAIN"],
         }
 
     monkeypatch.setattr(mcp_server, "_run_fetch_page_routed", fake_fetch_page_routed)
@@ -207,6 +211,117 @@ async def test_fetch_page_auto_profiles_suggest_profile_and_retries(monkeypatch)
     assert len(fetch_calls) == 2
     assert fetch_calls[0]["record_telemetry"] is True
     assert fetch_calls[1]["record_telemetry"] is True
+
+
+@pytest.mark.asyncio
+async def test_fetch_page_auto_profile_accept_gate_keeps_acceptable_profile(monkeypatch):
+    from trawl_mcp import server as mcp_server
+
+    url = "https://quality-keep.test/page"
+    query = "needle"
+    fetch_calls: list[str] = []
+    delete_calls: list[str] = []
+
+    async def fake_fetch_page_routed(
+        url,
+        query=None,
+        *,
+        k=None,
+        use_hyde=False,
+        use_rerank=True,
+        record_telemetry=True,
+        max_cache_age_s=None,
+    ):
+        del k, use_hyde, use_rerank, record_telemetry, max_cache_age_s
+        fetch_calls.append(url)
+        payload = (
+            _suggest_profile_payload(url, query)
+            if len(fetch_calls) == 1
+            else _profile_payload(url)
+        )
+        return SimpleNamespace(payload=payload)
+
+    async def fake_generate_profile(url, *, force_refresh=False):
+        del force_refresh
+        return {
+            "ok": True,
+            "url": url,
+            "url_hash": "abc123def456",
+            "cached": False,
+            "main_selector": "main.content",
+            "lca_tag": "DIV",
+            "lca_path": ["HTML", "BODY", "DIV"],
+        }
+
+    monkeypatch.setattr(mcp_server, "_run_fetch_page_routed", fake_fetch_page_routed)
+    monkeypatch.setattr(mcp_server, "_run_generate_profile", fake_generate_profile)
+    monkeypatch.setattr(mcp_server, "_delete_auto_profile", lambda url: delete_calls.append(url))
+    monkeypatch.setattr(mcp_server, "to_dict", lambda result: dict(result.payload))
+    monkeypatch.setenv("TRAWL_VLM_URL", "http://vlm.test/v1")
+
+    response = await mcp_server._call_fetch_page({"url": url, "query": query, "auto_profile": True})
+    payload = json.loads(response[0].text)
+
+    assert payload["path"] == "profile_direct"
+    assert payload["profile_used"] is True
+    assert "auto_profile_rejected" not in payload
+    assert delete_calls == []
+    assert mcp_server._auto_profile_failed_hosts == set()
+    assert fetch_calls == [url, url]
+
+
+@pytest.mark.asyncio
+async def test_fetch_page_auto_profile_accept_gate_rejects_shallow_div(monkeypatch):
+    from trawl_mcp import server as mcp_server
+
+    url = "https://quality-reject.test/page"
+    query = "needle"
+    fetch_calls: list[str] = []
+    delete_calls: list[str] = []
+
+    async def fake_fetch_page_routed(
+        url,
+        query=None,
+        *,
+        k=None,
+        use_hyde=False,
+        use_rerank=True,
+        record_telemetry=True,
+        max_cache_age_s=None,
+    ):
+        del k, use_hyde, use_rerank, record_telemetry, max_cache_age_s
+        fetch_calls.append(url)
+        return SimpleNamespace(payload=_suggest_profile_payload(url, query))
+
+    async def fake_generate_profile(url, *, force_refresh=False):
+        del force_refresh
+        return {
+            "ok": True,
+            "url": url,
+            "url_hash": "abc123def456",
+            "cached": False,
+            "main_selector": "main.content",
+            "lca_tag": "DIV",
+            "lca_path": ["HTML", "DIV"],
+        }
+
+    monkeypatch.setattr(mcp_server, "_run_fetch_page_routed", fake_fetch_page_routed)
+    monkeypatch.setattr(mcp_server, "_run_generate_profile", fake_generate_profile)
+    monkeypatch.setattr(mcp_server, "_delete_auto_profile", lambda url: delete_calls.append(url))
+    monkeypatch.setattr(mcp_server, "to_dict", lambda result: dict(result.payload))
+    monkeypatch.setenv("TRAWL_VLM_URL", "http://vlm.test/v1")
+
+    response = await mcp_server._call_fetch_page({"url": url, "query": query, "auto_profile": True})
+    payload = json.loads(response[0].text)
+
+    assert payload["path"] == "full_pipeline"
+    assert payload["profile_used"] is False
+    assert payload["profile_attempted"] is True
+    assert payload["auto_profile_rejected"] == "quality:DIV/2"
+    assert payload["profile_page"]["ok"] is True
+    assert delete_calls == [url]
+    assert mcp_server._auto_profile_failed_hosts == {"quality-reject.test"}
+    assert fetch_calls == [url]
 
 
 @pytest.mark.asyncio
@@ -338,6 +453,8 @@ async def test_fetch_page_auto_profile_cap_stops_triggering(monkeypatch):
             "url_hash": "abc123def456",
             "cached": False,
             "main_selector": "main.content",
+            "lca_tag": "MAIN",
+            "lca_path": ["HTML", "BODY", "MAIN"],
         }
 
     monkeypatch.setattr(mcp_server, "_run_fetch_page_routed", fake_fetch_page_routed)

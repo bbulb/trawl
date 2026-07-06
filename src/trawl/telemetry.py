@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _utc_now_iso() -> str:
@@ -43,6 +43,8 @@ def _build_event(result: PipelineResult) -> dict:
         "path": result.path,
         "profile_used": result.profile_used,
         "profile_hash": result.profile_hash,
+        "profile_top_score": result.profile_top_score,
+        "profile_query_coverage": result.profile_query_coverage,
         "suggest_profile": result.suggest_profile,
         "suggest_profile_reason": result.suggest_profile_reason,
         "content_type": result.content_type,
