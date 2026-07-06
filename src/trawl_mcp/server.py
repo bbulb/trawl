@@ -50,6 +50,9 @@ logger = logging.getLogger("trawl_mcp")
 
 server: Server = Server("trawl")
 
+_auto_profile_failed_hosts: set[str] = set()
+_auto_profile_attempt_count = 0
+
 
 FETCH_PAGE_DESCRIPTION = (
     "Fetch a web page or PDF and return the content most relevant to a "
@@ -59,10 +62,11 @@ FETCH_PAGE_DESCRIPTION = (
     "subtree is small (<=20 chunks by default), which makes 'what's on this "
     "page' style queries work without a specific search term. When no profile "
     "exists, behaves like the original retrieval-only pipeline and requires "
-    "a query unless auto_profile=true is supplied. With auto_profile=true, "
-    "a queryless missing-profile call first generates a profile using "
-    "profile_page, then retries the fetch via the profile fast path. After "
-    "3+ visits to a URL without a profile, the response "
+    "a query unless auto_profile=true is supplied. With auto_profile=true "
+    "(or TRAWL_MCP_AUTO_PROFILE=1), a missing-profile call without a query, "
+    "or a with-query call that returns suggest_profile=true without using a "
+    "profile, first generates a profile using profile_page, then retries the "
+    "fetch via the profile fast path. After 3+ visits to a URL without a profile, the response "
     "includes suggest_profile=true as a hint that calling profile_page on "
     "this URL would speed up future calls. Handles PDFs automatically (URL "
     "ending in .pdf or /pdf/). Cloudflare-protected sites work via "
@@ -212,6 +216,43 @@ def _profile_page_enabled() -> bool:
     return bool(os.environ.get("TRAWL_VLM_URL"))
 
 
+def _auto_profile_env_default() -> bool:
+    return os.environ.get("TRAWL_MCP_AUTO_PROFILE") == "1"
+
+
+def _auto_profile_max() -> int:
+    raw = os.environ.get("TRAWL_MCP_AUTO_PROFILE_MAX", "10")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 10
+
+
+def _auto_profile_host(url: str) -> str:
+    parsed = urlsplit(url)
+    return (parsed.hostname or parsed.netloc or url).lower()
+
+
+def _auto_profile_skip_reason(url: str) -> str | None:
+    if _auto_profile_host(url) in _auto_profile_failed_hosts:
+        return "failed_host"
+    if _auto_profile_attempt_count >= _auto_profile_max():
+        return "cap_reached"
+    return None
+
+
+def _result_suggests_auto_profile(result) -> bool:
+    try:
+        payload = to_dict(result)
+    except Exception:  # noqa: BLE001
+        return False
+    return (
+        not payload.get("error")
+        and payload.get("suggest_profile") is True
+        and payload.get("profile_used") is False
+    )
+
+
 async def _run_fetch_page_routed(
     url: str,
     query: str | None,
@@ -291,6 +332,66 @@ def _profile_page_payload_for_fetch(payload: dict) -> dict:
     return compact
 
 
+async def _auto_profile_generate_and_retry(
+    result,
+    url: str,
+    query: str | None,
+    *,
+    k: int | None,
+    use_hyde: bool,
+    use_rerank: bool,
+    max_cache_age_s: int | None,
+    auto_profile_payload: dict,
+    initial_recorded: bool,
+):
+    global _auto_profile_attempt_count
+
+    if not _profile_page_enabled():
+        auto_profile_payload["profile_error"] = "profile_page disabled: set TRAWL_VLM_URL to enable"
+        if not initial_recorded:
+            trawl_telemetry.record(result)
+        return result
+
+    skip_reason = _auto_profile_skip_reason(url)
+    if skip_reason:
+        if skip_reason == "cap_reached":
+            auto_profile_payload["auto_profile_skipped"] = "cap_reached"
+        if not initial_recorded:
+            trawl_telemetry.record(result)
+        return result
+
+    _auto_profile_attempt_count += 1
+    try:
+        profile_payload = await _run_generate_profile(url, force_refresh=False)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("auto_profile failed for %s", url)
+        profile_payload = {
+            "ok": False,
+            "stage": "profile",
+            "error": f"{type(e).__name__}: {e}",
+            "notes": [],
+        }
+
+    auto_profile_payload["profile_attempted"] = True
+    auto_profile_payload["profile_page"] = _profile_page_payload_for_fetch(profile_payload)
+    if _profile_generation_succeeded(profile_payload):
+        return await _run_fetch_page_routed(
+            url,
+            query,
+            k=k,
+            use_hyde=use_hyde,
+            use_rerank=use_rerank,
+            record_telemetry=True,
+            max_cache_age_s=max_cache_age_s,
+        )
+
+    _auto_profile_failed_hosts.add(_auto_profile_host(url))
+    auto_profile_payload["profile_error"] = _truncate_text(profile_payload.get("error"))
+    if not initial_recorded:
+        trawl_telemetry.record(result)
+    return result
+
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     tools = [
@@ -349,11 +450,12 @@ async def list_tools() -> list[Tool]:
                     },
                     "auto_profile": {
                         "type": "boolean",
-                        "default": False,
-                        "description": "When query is omitted and no usable "
-                        "profile exists, generate a profile with the vision "
-                        "LLM and retry the fetch. Requires TRAWL_VLM_URL "
-                        "and can add ~10-20s latency.",
+                        "default": _auto_profile_env_default(),
+                        "description": "Auto-generate a profile when the page "
+                        "is fetched without one and either no query is given "
+                        "or the server suggests profiling (suggest_profile). "
+                        "Defaults from TRAWL_MCP_AUTO_PROFILE. Requires "
+                        "TRAWL_VLM_URL and can add ~10-20s latency.",
                     },
                 },
             },
@@ -419,7 +521,7 @@ async def _call_fetch_page(arguments: dict) -> list[TextContent]:
     k = arguments.get("k")
     use_hyde = bool(arguments.get("use_hyde", False))
     use_rerank = bool(arguments.get("use_rerank", True))
-    auto_profile = bool(arguments.get("auto_profile", False))
+    auto_profile = bool(arguments.get("auto_profile", _auto_profile_env_default()))
     raw = arguments.get("max_cache_age_s")
     try:
         max_cache_age_s = int(raw) if raw is not None else None
@@ -458,39 +560,31 @@ async def _call_fetch_page(arguments: dict) -> list[TextContent]:
         }
 
     if auto_profile_queryless and _result_missing_profile(result):
-        if _profile_page_enabled():
-            try:
-                profile_payload = await _run_generate_profile(url, force_refresh=False)
-            except Exception as e:  # noqa: BLE001
-                logger.exception("auto_profile failed for %s", url)
-                profile_payload = {
-                    "ok": False,
-                    "stage": "profile",
-                    "error": f"{type(e).__name__}: {e}",
-                    "notes": [],
-                }
-            auto_profile_payload["profile_attempted"] = True
-            auto_profile_payload["profile_page"] = _profile_page_payload_for_fetch(profile_payload)
-            if _profile_generation_succeeded(profile_payload):
-                result = await _run_fetch_page_routed(
-                    url,
-                    query,
-                    k=k,
-                    use_hyde=use_hyde,
-                    use_rerank=use_rerank,
-                    record_telemetry=True,
-                    max_cache_age_s=max_cache_age_s,
-                )
-            else:
-                auto_profile_payload["profile_error"] = _truncate_text(profile_payload.get("error"))
-                trawl_telemetry.record(result)
-        else:
-            auto_profile_payload["profile_error"] = (
-                "profile_page disabled: set TRAWL_VLM_URL to enable"
-            )
-            trawl_telemetry.record(result)
+        result = await _auto_profile_generate_and_retry(
+            result,
+            url,
+            query,
+            k=k,
+            use_hyde=use_hyde,
+            use_rerank=use_rerank,
+            max_cache_age_s=max_cache_age_s,
+            auto_profile_payload=auto_profile_payload,
+            initial_recorded=False,
+        )
     elif auto_profile_queryless:
         trawl_telemetry.record(result)
+    elif auto_profile and query and _result_suggests_auto_profile(result):
+        result = await _auto_profile_generate_and_retry(
+            result,
+            url,
+            query,
+            k=k,
+            use_hyde=use_hyde,
+            use_rerank=use_rerank,
+            max_cache_age_s=max_cache_age_s,
+            auto_profile_payload=auto_profile_payload,
+            initial_recorded=True,
+        )
 
     payload = to_dict(result)
     payload["ok"] = not bool(payload.get("error"))
