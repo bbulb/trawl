@@ -92,10 +92,16 @@ trawl directory. Humans should read `README.md` first, then
   - `:8083` — bge-reranker-v2-m3 cross-encoder. Default on; falls back
     gracefully to cosine-only if absent. Run with
     `--reranking --pooling rank`.
-  - `:8080` — vision-enabled main LLM. Used **only** for explicit
-    `profile_page` invocations (bounded, manual-trigger workload).
-    If slot contention shows up, set `TRAWL_VLM_URL` to a dedicated
-    vision server; no code changes needed.
+  - `:8080` — vision-enabled main LLM. Used for explicit
+    `profile_page` invocations and — since 2026-07-07, when
+    `TRAWL_MCP_AUTO_PROFILE=1` (on in the standalone deployment) —
+    bounded auto-profiling: MCP `fetch_page` may generate a profile
+    when `suggest_profile` fires, capped per process by
+    `TRAWL_MCP_AUTO_PROFILE_MAX` (default 10) with a failed-host
+    cooldown and a quality accept-gate (degenerate profiles are
+    discarded, PR #92). Still a bounded workload, no longer strictly
+    manual-trigger. If slot contention shows up, set `TRAWL_VLM_URL`
+    to a dedicated vision server; no code changes needed.
   - **Slot pinning** — `TRAWL_VLM_SLOT=<N>` / `TRAWL_HYDE_SLOT=<N>`
     pin requests to a specific llama-server slot (via `id_slot`) to
     avoid evicting other consumers' KV cache on shared servers with

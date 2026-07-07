@@ -41,6 +41,8 @@ services:
       # TRAWL_HYDE_SLOT: ${TRAWL_HYDE_SLOT:-}
       TRAWL_TELEMETRY: ${TRAWL_TELEMETRY:-1}
       TRAWL_CHUNK_BUDGET: ${TRAWL_CHUNK_BUDGET:-100}
+      # Auto-generate profiles on suggest_profile (PR #91/#92; accept-gate rejects degenerate profiles; capped by TRAWL_MCP_AUTO_PROFILE_MAX=10 default).
+      TRAWL_MCP_AUTO_PROFILE: ${TRAWL_MCP_AUTO_PROFILE:-1}
     volumes:
       - ~/.trawl:/root/.cache/trawl
     logging:
