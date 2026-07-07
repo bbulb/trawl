@@ -9,6 +9,10 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Added
 
+- Image-dominant product pages now surface `content_images` and the
+  `image_dominant_content` warning for vision-capable callers, with
+  `TRAWL_IMAGE_SCAN=0` as an opt-out.
+
 - AUTO profile generation now applies a quality accept-gate: the auto
   path refuses to keep profiles classified worse than acceptable, while
   explicit `profile_page` behavior is unchanged.

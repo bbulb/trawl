@@ -29,6 +29,7 @@ from . import (
     extraction,
     fetch_cache,
     hyde,
+    images,
     reranking,
     retrieval,
     sanitize,
@@ -48,6 +49,7 @@ from .fetchers import (
 logger = logging.getLogger(__name__)
 
 BROWSER_FALLBACK_REQUIRED = "browser fallback required"
+IMAGE_DOMINANT_CONTENT_WARNING = "image_dominant_content"
 
 ANTI_BOT_MARKERS: tuple[str, ...] = (
     "cf-challenge",
@@ -114,6 +116,7 @@ class PipelineResult:
     chunks: list[dict]
     error: str | None = None
     warnings: list[str] = field(default_factory=list)
+    content_images: list[str] = field(default_factory=list)
     # New fields for the profile feature. All have safe defaults so
     # existing callers that construct PipelineResult by hand keep working.
     profile_used: bool = False
@@ -580,7 +583,10 @@ def _build_profile_result(
         emitted_chunks = list(chunks)
 
     scan_warnings = _scan_injection(retrieved_dicts, html=subtree_html)
+    image_dominant, content_images = images.scan_content_images(subtree_html, len(md), url)
     profile_warnings = ([retrieval_warning] if retrieval_warning else []) + scan_warnings
+    if image_dominant:
+        profile_warnings.append(IMAGE_DOMINANT_CONTENT_WARNING)
     profile_top_score = _profile_top_score(retrieved_dicts)
     profile_query_coverage = _profile_query_coverage(query, retrieved_dicts)
 
@@ -590,6 +596,7 @@ def _build_profile_result(
         total_ms=int((time.monotonic() - t_start) * 1000),
         chunks=retrieved_dicts,
         warnings=profile_warnings,
+        content_images=content_images,
         path=path,
         profile_top_score=profile_top_score,
         profile_query_coverage=profile_query_coverage,
@@ -1316,6 +1323,9 @@ def _run_full_pipeline(
     ]
     warnings = [retrieved.warning] if retrieved.warning else []
     warnings += _scan_injection(chunk_dicts, html=fetched_html)
+    image_dominant, content_images = images.scan_content_images(fetched_html, len(markdown), url)
+    if image_dominant:
+        warnings.append(IMAGE_DOMINANT_CONTENT_WARNING)
     return PipelineResult(
         url=url,
         query=query,
@@ -1331,6 +1341,7 @@ def _run_full_pipeline(
         hyde_text=hyde_text,
         chunks=chunk_dicts,
         warnings=warnings,
+        content_images=content_images,
         excerpts=enrichment.extract_excerpts(emitted_chunks),
         outbound_links=enrichment.extract_outbound_links(emitted_chunks),
         page_entities=enrichment.extract_page_entities(
