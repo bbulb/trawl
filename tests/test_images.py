@@ -71,6 +71,28 @@ def test_lazy_load_attr_priority_uses_first_non_empty_value():
     assert urls[0] == "https://example.com/picked.jpg"
 
 
+def test_data_uri_placeholder_does_not_shadow_ec_data_src():
+    html = """
+    <main>
+      <img src="data:image/png;base64,AAAA" ec-data-src="/web/upload/NNEditor/x_01.jpg">
+      <img src="data:image/png;base64,AAAA" ec-data-src="/web/upload/NNEditor/x_02.jpg">
+      <img src="data:image/png;base64,AAAA" ec-data-src="/web/upload/NNEditor/x_03.jpg">
+      <img src="data:image/png;base64,AAAA" ec-data-src="/web/upload/NNEditor/x_04.jpg">
+      <img src="data:image/png;base64,AAAA" ec-data-src="/web/upload/NNEditor/x_05.jpg">
+    </main>
+    """
+    dominant, urls = scan_content_images(html, 100, "https://shop.example/item/123")
+
+    assert dominant is True
+    assert urls == [
+        "https://shop.example/web/upload/NNEditor/x_01.jpg",
+        "https://shop.example/web/upload/NNEditor/x_02.jpg",
+        "https://shop.example/web/upload/NNEditor/x_03.jpg",
+        "https://shop.example/web/upload/NNEditor/x_04.jpg",
+        "https://shop.example/web/upload/NNEditor/x_05.jpg",
+    ]
+
+
 def test_data_svg_and_tiny_images_are_skipped():
     html = """
     <main>

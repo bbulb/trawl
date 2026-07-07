@@ -56,7 +56,7 @@ def _explicitly_tiny(img) -> bool:
 def _image_url(img) -> str:
     for attr in _URL_ATTRS:
         value = _attr_text(img.get(attr)).strip()
-        if value:
+        if value and not value.lower().startswith("data:"):
             return value
     return ""
 
