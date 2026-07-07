@@ -146,6 +146,7 @@ def _call_fetch_relevant_sync(
     allow_browser: bool,
     record_telemetry: bool,
     max_cache_age_s: int | None = None,
+    transcribe_images: bool | None = None,
 ):
     kwargs = {
         "k": k,
@@ -158,6 +159,8 @@ def _call_fetch_relevant_sync(
         kwargs["record_telemetry"] = record_telemetry
     if _supports_keyword(fetch_relevant, "max_cache_age_s"):
         kwargs["max_cache_age_s"] = max_cache_age_s
+    if _supports_keyword(fetch_relevant, "transcribe_images"):
+        kwargs["transcribe_images"] = transcribe_images
     return fetch_relevant(url, query, **kwargs)
 
 
@@ -171,6 +174,7 @@ async def _run_fetch_page_pipeline(
     allow_browser: bool,
     record_telemetry: bool,
     max_cache_age_s: int | None,
+    transcribe_images: bool | None,
     executor: ThreadPoolExecutor,
 ):
     loop = asyncio.get_running_loop()
@@ -186,6 +190,7 @@ async def _run_fetch_page_pipeline(
             allow_browser=allow_browser,
             record_telemetry=record_telemetry,
             max_cache_age_s=max_cache_age_s,
+            transcribe_images=transcribe_images,
         ),
     )
 
@@ -262,6 +267,7 @@ async def _run_fetch_page_routed(
     use_rerank: bool,
     record_telemetry: bool,
     max_cache_age_s: int | None,
+    transcribe_images: bool | None,
 ):
     if _browser_free_fetch_page_route(url):
         result = await _run_fetch_page_pipeline(
@@ -273,6 +279,7 @@ async def _run_fetch_page_routed(
             allow_browser=False,
             record_telemetry=False,
             max_cache_age_s=max_cache_age_s,
+            transcribe_images=transcribe_images,
             executor=_general_executor,
         )
         if _result_requires_browser_retry(result):
@@ -285,6 +292,7 @@ async def _run_fetch_page_routed(
                 allow_browser=True,
                 record_telemetry=record_telemetry,
                 max_cache_age_s=max_cache_age_s,
+                transcribe_images=transcribe_images,
                 executor=_browser_executor,
             )
         if record_telemetry:
@@ -300,6 +308,7 @@ async def _run_fetch_page_routed(
         allow_browser=True,
         record_telemetry=record_telemetry,
         max_cache_age_s=max_cache_age_s,
+        transcribe_images=transcribe_images,
         executor=_browser_executor,
     )
 
@@ -377,6 +386,7 @@ async def _auto_profile_generate_and_retry(
     use_hyde: bool,
     use_rerank: bool,
     max_cache_age_s: int | None,
+    transcribe_images: bool | None,
     auto_profile_payload: dict,
     initial_recorded: bool,
 ):
@@ -427,6 +437,7 @@ async def _auto_profile_generate_and_retry(
             use_rerank=use_rerank,
             record_telemetry=True,
             max_cache_age_s=max_cache_age_s,
+            transcribe_images=transcribe_images,
         )
 
     _auto_profile_failed_hosts.add(_auto_profile_host(url))
@@ -491,6 +502,12 @@ async def list_tools() -> list[Tool]:
                         "minimum": 0,
                         "description": "Override fetch-cache freshness in seconds; "
                         "0 revalidates, omitted follows the env TTL.",
+                    },
+                    "transcribe_images": {
+                        "type": "boolean",
+                        "description": "Transcribe text from content images via the vision LLM "
+                        "when the page is image-dominant. Defaults from "
+                        "TRAWL_IMAGE_TRANSCRIBE. Adds up to ~10 s per image.",
                     },
                     "auto_profile": {
                         "type": "boolean",
@@ -566,6 +583,8 @@ async def _call_fetch_page(arguments: dict) -> list[TextContent]:
     use_hyde = bool(arguments.get("use_hyde", False))
     use_rerank = bool(arguments.get("use_rerank", True))
     auto_profile = bool(arguments.get("auto_profile", _auto_profile_env_default()))
+    raw = arguments.get("transcribe_images")
+    transcribe_images = bool(raw) if raw is not None else None
     raw = arguments.get("max_cache_age_s")
     try:
         max_cache_age_s = int(raw) if raw is not None else None
@@ -577,13 +596,14 @@ async def _call_fetch_page(arguments: dict) -> list[TextContent]:
         return _error_response("url is required")
 
     logger.info(
-        "fetch_page url=%s query=%r k=%s hyde=%s rerank=%s auto_profile=%s",
+        "fetch_page url=%s query=%r k=%s hyde=%s rerank=%s auto_profile=%s transcribe_images=%s",
         url,
         query,
         k,
         use_hyde,
         use_rerank,
         auto_profile,
+        transcribe_images,
     )
     auto_profile_queryless = auto_profile and not query
     result = await _run_fetch_page_routed(
@@ -594,6 +614,7 @@ async def _call_fetch_page(arguments: dict) -> list[TextContent]:
         use_rerank=use_rerank,
         record_telemetry=not auto_profile_queryless,
         max_cache_age_s=max_cache_age_s,
+        transcribe_images=transcribe_images,
     )
 
     auto_profile_payload: dict = {}
@@ -612,6 +633,7 @@ async def _call_fetch_page(arguments: dict) -> list[TextContent]:
             use_hyde=use_hyde,
             use_rerank=use_rerank,
             max_cache_age_s=max_cache_age_s,
+            transcribe_images=transcribe_images,
             auto_profile_payload=auto_profile_payload,
             initial_recorded=False,
         )
@@ -626,6 +648,7 @@ async def _call_fetch_page(arguments: dict) -> list[TextContent]:
             use_hyde=use_hyde,
             use_rerank=use_rerank,
             max_cache_age_s=max_cache_age_s,
+            transcribe_images=transcribe_images,
             auto_profile_payload=auto_profile_payload,
             initial_recorded=True,
         )

@@ -36,6 +36,8 @@ def isolated_cache(tmp_path: Path, monkeypatch):
 def fake_fetcher(monkeypatch):
     """Replace `_fetch_html` with a counter so we can assert hits vs misses."""
     calls: list[str] = []
+    monkeypatch.setattr(pipeline.passthrough, "probe", lambda _url: None)
+    monkeypatch.setattr(pipeline.pdf, "probe", lambda _url: False)
 
     def _fake(url: str, query: str | None = None):
         calls.append(url)
@@ -215,6 +217,41 @@ def test_default_max_cache_age_none_uses_global_ttl(fake_fetcher, fake_retrieval
     assert r.cache_hit is True
     assert r.page_title == "cached"
     assert len(fake_fetcher) == 0
+
+
+def test_transcribe_images_bypasses_fetch_cache_read(
+    fake_fetcher, fake_retrieval, no_profile, monkeypatch
+):
+    url = "https://example.com/transcribe-cache-bypass"
+    fetch_cache.put(
+        fetch_cache.CachedFetch(
+            url=url,
+            markdown="# cached\n\ncached body",
+            page_title="cached",
+            fetcher_used="playwright+trafilatura",
+            content_type="text/html",
+            cached_at=time.time(),
+            fetch_elapsed_ms=1000,
+        )
+    )
+
+    def fail_cache_read(*_args, **_kwargs):
+        raise AssertionError("fetch cache read should be bypassed")
+
+    monkeypatch.setattr(fetch_cache, "get_with_state", fail_cache_read)
+    monkeypatch.setattr(
+        pipeline.images,
+        "scan_content_images",
+        lambda _html, _markdown_chars, _base_url: (False, []),
+    )
+
+    r = pipeline.fetch_relevant(url, "q", transcribe_images=True)
+
+    assert r.cache_hit is False
+    assert len(fake_fetcher) == 1
+    got = fetch_cache.get(url)
+    assert got is not None
+    assert got.markdown.startswith("# Cached Page")
 
 
 def test_expired_entry_revalidated_304_reuses_cache(

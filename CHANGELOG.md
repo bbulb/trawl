@@ -9,6 +9,12 @@ not yet follow semver strictly — expect breaking changes before
 
 ### Added
 
+- Opt-in image transcription for image-dominant pages, disabled by
+  default. Enable with `TRAWL_IMAGE_TRANSCRIBE=1` or MCP
+  `fetch_page(transcribe_images=true)` to select tall content images,
+  cache successful transcripts, splice them before chunking, and expose
+  the `images_transcribed` result field.
+
 - Image-dominant product pages now surface `content_images` and the
   `image_dominant_content` warning for vision-capable callers, with
   `TRAWL_IMAGE_SCAN=0` as an opt-out.

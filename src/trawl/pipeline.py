@@ -29,6 +29,7 @@ from . import (
     extraction,
     fetch_cache,
     hyde,
+    image_transcribe,
     images,
     reranking,
     retrieval,
@@ -117,6 +118,7 @@ class PipelineResult:
     error: str | None = None
     warnings: list[str] = field(default_factory=list)
     content_images: list[str] = field(default_factory=list)
+    images_transcribed: int = 0
     # New fields for the profile feature. All have safe defaults so
     # existing callers that construct PipelineResult by hand keep working.
     profile_used: bool = False
@@ -269,6 +271,46 @@ def _scan_injection(chunk_dicts: list[dict], *, html: str | None) -> list[str]:
     except Exception as e:  # noqa: BLE001
         logger.warning("injection scan failed, skipping: %s", e)
         return []
+
+
+def _image_text_heading_name(url: str) -> str:
+    path = urlsplit(url).path.rstrip("/")
+    return path.rsplit("/", 1)[-1] or "image"
+
+
+def _scan_and_transcribe_images(
+    html: str,
+    markdown: str,
+    url: str,
+    transcribe_override: bool | None,
+    *,
+    transcribe_enabled: bool | None = None,
+) -> tuple[str, bool, list[str], int]:
+    """Return (markdown, image_dominant, content_images, n_transcribed)."""
+    try:
+        image_dominant, content_images = images.scan_content_images(html, len(markdown), url)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("image scan failed, skipping: %s", e)
+        return markdown, False, [], 0
+
+    if transcribe_enabled is None:
+        transcribe_enabled = image_transcribe.is_enabled(transcribe_override)
+    if not image_dominant or not transcribe_enabled:
+        return markdown, image_dominant, content_images, 0
+
+    try:
+        transcripts = image_transcribe.transcribe_content_images(content_images)
+        additions = [
+            f"\n\n## Image text ({_image_text_heading_name(image_url)})\n\n{text}\n"
+            for image_url, text in transcripts
+        ]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("image transcription failed, skipping: %s", e)
+        return markdown, image_dominant, content_images, 0
+
+    for addition in additions:
+        markdown += addition
+    return markdown, image_dominant, content_images, len(additions)
 
 
 def _retrieval_diagnostics(result: retrieval.RetrievalResult) -> dict:
@@ -468,6 +510,7 @@ def _build_profile_result(
     t_start: float,
     fetch_ms: int,
     use_rerank: bool = True,
+    transcribe_override: bool | None = None,
 ) -> PipelineResult:
     """Given a subtree HTML snippet already extracted via a profile's
     selector, build the PipelineResult that the caller returns.
@@ -477,6 +520,14 @@ def _build_profile_result(
     t_chunk = time.monotonic()
     extracted = extraction.extract_html(subtree_html, query=query)
     md = extracted.markdown
+    t_img = time.monotonic()
+    md, image_dominant, content_images, n_transcribed = _scan_and_transcribe_images(
+        subtree_html,
+        md,
+        url,
+        transcribe_override,
+    )
+    img_ms = time.monotonic() - t_img
     chunks = chunking.chunk_markdown(
         md,
         extractor=extracted.extractor,
@@ -484,7 +535,7 @@ def _build_profile_result(
         source_selector=profile.mapper.main_selector or extracted.source_selector,
         source_xpath=extracted.source_xpath,
     )
-    chunk_ms = int((time.monotonic() - t_chunk) * 1000)
+    chunk_ms = int((time.monotonic() - t_chunk - img_ms) * 1000)
 
     # Profile path operates on a subtree; the full-page <title> isn't
     # available here, so fall back to markdown H1 only.
@@ -505,6 +556,8 @@ def _build_profile_result(
         "profile_used": True,
         "profile_hash": profile.url_hash,
         "page_title": page_title,
+        "content_images": content_images,
+        "images_transcribed": n_transcribed,
     }
 
     rerank_ms = 0
@@ -540,13 +593,16 @@ def _build_profile_result(
         embed_cache_misses = retrieved.embed_cache_misses
         retrieval_warning = retrieved.warning
         if retrieved.error:
+            error_warnings = [retrieval_warning] if retrieval_warning else []
+            if image_dominant:
+                error_warnings.append(IMAGE_DOMINANT_CONTENT_WARNING)
             return PipelineResult(
                 **base_kwargs,
                 retrieval_ms=retrieval_ms,
                 total_ms=int((time.monotonic() - t_start) * 1000),
                 chunks=[],
                 error=retrieved.error,
-                warnings=[retrieval_warning] if retrieval_warning else [],
+                warnings=error_warnings,
                 path=path,
                 profile_top_score=None,
                 profile_query_coverage=_profile_query_coverage(query, []),
@@ -583,7 +639,6 @@ def _build_profile_result(
         emitted_chunks = list(chunks)
 
     scan_warnings = _scan_injection(retrieved_dicts, html=subtree_html)
-    image_dominant, content_images = images.scan_content_images(subtree_html, len(md), url)
     profile_warnings = ([retrieval_warning] if retrieval_warning else []) + scan_warnings
     if image_dominant:
         profile_warnings.append(IMAGE_DOMINANT_CONTENT_WARNING)
@@ -596,7 +651,6 @@ def _build_profile_result(
         total_ms=int((time.monotonic() - t_start) * 1000),
         chunks=retrieved_dicts,
         warnings=profile_warnings,
-        content_images=content_images,
         path=path,
         profile_top_score=profile_top_score,
         profile_query_coverage=profile_query_coverage,
@@ -633,6 +687,7 @@ def _profile_fast_path(
     k: int | None,
     t_start: float,
     use_rerank: bool = True,
+    transcribe_override: bool | None = None,
 ) -> PipelineResult | None:
     """Attempt the profile fast path. Returns a PipelineResult on
     success, or None if the profile has drifted (selector no longer
@@ -683,6 +738,7 @@ def _profile_fast_path(
         t_start=t_start,
         fetch_ms=fetch_ms,
         use_rerank=use_rerank,
+        transcribe_override=transcribe_override,
     )
 
 
@@ -693,6 +749,7 @@ def _profile_transfer_path(
     k: int | None,
     t_start: float,
     use_rerank: bool = True,
+    transcribe_override: bool | None = None,
 ) -> PipelineResult | None:
     """Try to match `url` against existing same-host profiles.
 
@@ -795,6 +852,7 @@ def _profile_transfer_path(
                     t_start=t_start,
                     fetch_ms=fetch_ms,
                     use_rerank=use_rerank,
+                    transcribe_override=transcribe_override,
                 )
     logger.info(
         "transfer: no host-local profile matched %s (scanned %d)",
@@ -814,6 +872,7 @@ def fetch_relevant(
     allow_browser: bool = True,
     record_telemetry: bool = True,
     max_cache_age_s: int | None = None,
+    transcribe_images: bool | None = None,
 ) -> PipelineResult:
     """Public entry point. See _fetch_relevant_impl for logic.
 
@@ -835,6 +894,7 @@ def fetch_relevant(
         use_rerank=use_rerank,
         allow_browser=allow_browser,
         max_cache_age_s=max_cache_age_s,
+        transcribe_images=transcribe_images,
     )
     if record_telemetry:
         telemetry.record(result)
@@ -850,6 +910,7 @@ def _fetch_relevant_impl(
     use_rerank: bool = True,
     allow_browser: bool = True,
     max_cache_age_s: int | None = None,
+    transcribe_images: bool | None = None,
 ) -> PipelineResult:
     """Fetch `url`, return the main content.
 
@@ -892,6 +953,7 @@ def _fetch_relevant_impl(
                 k=k,
                 t_start=t_start,
                 use_rerank=use_rerank,
+                transcribe_override=transcribe_images,
             )
         except Exception as e:
             logger.warning("profile fast path raised, falling through: %s", e)
@@ -909,6 +971,7 @@ def _fetch_relevant_impl(
                 k=k,
                 t_start=t_start,
                 use_rerank=use_rerank,
+                transcribe_override=transcribe_images,
             )
         except Exception as e:
             logger.warning("profile transfer path raised, falling through: %s", e)
@@ -949,6 +1012,7 @@ def _fetch_relevant_impl(
         t_start=t_start,
         allow_browser=allow_browser,
         max_cache_age_s=max_cache_age_s,
+        transcribe_override=transcribe_images,
     )
 
     # Populate lazy suggest_profile hint on the fallback path.
@@ -1123,15 +1187,21 @@ def _run_full_pipeline(
     t_start: float,
     allow_browser: bool = True,
     max_cache_age_s: int | None = None,
+    transcribe_override: bool | None = None,
 ) -> PipelineResult:
     """Non-profile pipeline: fetch → extract → chunk → (HyDE) → retrieve → rerank."""
+    transcribe_enabled = image_transcribe.is_enabled(transcribe_override)
     # 1. Fetch → markdown (or short-circuit for PDF / passthrough).
     # C8: try the per-URL fetch cache first. Hit reuses pre-computed
     # markdown + page_title so Playwright/Trafilatura are skipped;
     # chunking / embedding / retrieval still run fresh because they're
     # query-dependent.
-    cached, cache_stale = fetch_cache.get_with_state(url, max_age_s=max_cache_age_s)
     revalidation_ms = 0
+    if transcribe_enabled:
+        # Transcription needs raw HTML, which the cache does not store.
+        cached, cache_stale = None, False
+    else:
+        cached, cache_stale = fetch_cache.get_with_state(url, max_age_s=max_cache_age_s)
     if cached is not None and cache_stale:
         revalidated = fetch_cache.revalidate(cached)
         revalidation_ms = revalidated.elapsed_ms
@@ -1248,6 +1318,14 @@ def _run_full_pipeline(
             )
         )
 
+    markdown, image_dominant, content_images, n_transcribed = _scan_and_transcribe_images(
+        fetched_html,
+        markdown,
+        url,
+        transcribe_override,
+        transcribe_enabled=transcribe_enabled,
+    )
+
     # 2. Chunk
     t_chunk = time.monotonic()
     chunks = chunking.chunk_markdown(
@@ -1283,6 +1361,9 @@ def _run_full_pipeline(
         context_texts=context_batch.texts if context_batch else None,
     )
     if retrieved.error:
+        error_warnings = [retrieved.warning] if retrieved.warning else []
+        if image_dominant:
+            error_warnings.append(IMAGE_DOMINANT_CONTENT_WARNING)
         return _error_result(
             url,
             query,
@@ -1296,6 +1377,9 @@ def _run_full_pipeline(
             n_chunks_total=len(chunks),
             hyde_used=use_hyde,
             hyde_text=hyde_text,
+            warnings=error_warnings,
+            content_images=content_images,
+            images_transcribed=n_transcribed,
             n_chunks_embedded=retrieved.n_chunks_embedded,
             embed_cache_hits=retrieved.embed_cache_hits,
             embed_cache_misses=retrieved.embed_cache_misses,
@@ -1323,7 +1407,6 @@ def _run_full_pipeline(
     ]
     warnings = [retrieved.warning] if retrieved.warning else []
     warnings += _scan_injection(chunk_dicts, html=fetched_html)
-    image_dominant, content_images = images.scan_content_images(fetched_html, len(markdown), url)
     if image_dominant:
         warnings.append(IMAGE_DOMINANT_CONTENT_WARNING)
     return PipelineResult(
@@ -1342,6 +1425,7 @@ def _run_full_pipeline(
         chunks=chunk_dicts,
         warnings=warnings,
         content_images=content_images,
+        images_transcribed=n_transcribed,
         excerpts=enrichment.extract_excerpts(emitted_chunks),
         outbound_links=enrichment.extract_outbound_links(emitted_chunks),
         page_entities=enrichment.extract_page_entities(
